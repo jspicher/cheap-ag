@@ -6,7 +6,7 @@ import type { ModelsConfig } from "./routing.js";
 /** Optional settings: the repo's `cheapag.json` overrides the user's `~/.config/cheapag/config.json` (spec E4). */
 export type Config = {
   test_cmd?: string; integration_cmd?: string; link_dirs: string[]; allow_commands: string[]; limits: Limits; retention: Retention;
-  models: ModelsConfig; escalation_skip_at: number; guard_lines: number; hard_tasks: HardTasks; takeover: TakeOver;
+  models: ModelsConfig; aliases: Record<string, string>; escalation_skip_at: number; guard_lines: number; hard_tasks: HardTasks; takeover: TakeOver;
 };
 /** Who implements a hard task (ticket 26): the worker on `models.hard`, Claude itself, or Claude's own Sonnet subagent. */
 export const HARD_TASKS = ["delegate", "self", "sonnet"] as const;
@@ -24,6 +24,7 @@ const DEFAULTS: Config = {
   limits: { max_turns: 25, max_minutes: 20, max_cost_usd: 0.5, max_parallel: 3, max_blocked_minutes: 60, repro_by_turns: 12, takeover_calls: 15 },
   retention: { unlanded_worktree_days: 7, job_log_days: 30 },
   models: {}, // the provider's role defaults (src/routing.ts)
+  aliases: {}, // short names for delegate's and research's `model`, e.g. { "glm": "openrouter/z-ai/glm-5.3" }
   escalation_skip_at: 0.8,
   guard_lines: 20,
   hard_tasks: "delegate",
@@ -74,6 +75,7 @@ export function loadConfig(root: string): Config {
     limits: { ...DEFAULTS.limits, ...mine.limits, ...repo.limits },
     retention: { ...DEFAULTS.retention, ...mine.retention, ...repo.retention },
     models: { ...mine.models, ...repo.models },
+    aliases: { ...mine.aliases, ...repo.aliases },
   };
 }
 
@@ -92,7 +94,7 @@ function read(file: string): Partial<Omit<Config, "limits" | "retention">> & { l
     throw new Error(`${file} is not valid JSON: ${(err as Error).message}`);
   }
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error(`${file} must hold a JSON object`);
-  const { test_cmd, integration_cmd, link_dirs, allow_commands, limits, retention, models, escalation_skip_at, guard_lines, hard_tasks, takeover, local } = value as Record<string, unknown>;
+  const { test_cmd, integration_cmd, link_dirs, allow_commands, limits, retention, models, aliases, escalation_skip_at, guard_lines, hard_tasks, takeover, local } = value as Record<string, unknown>;
   if (local !== undefined) {
     if (file !== userConfigFile()) throw new Error(`${file}: local can only be set in ${userConfigFile()}, never in a repo`);
     parseLocal(local, file);
@@ -129,6 +131,12 @@ function read(file: string): Partial<Omit<Config, "limits" | "retention">> & { l
     if (roles[role] !== undefined && !name(roles[role])) throw new Error(`${file}: models.${role} must be a provider/model name, e.g. opencode-go/deepseek-v4.1-flash`);
   }
   if (roles.fallback !== undefined && (!Array.isArray(roles.fallback) || !roles.fallback.every(name))) throw new Error(`${file}: models.fallback must be a list of provider/model names`);
+  if (aliases !== undefined && (typeof aliases !== "object" || aliases === null || Array.isArray(aliases))) throw new Error(`${file}: aliases must be an object`);
+  for (const [alias, target] of Object.entries((aliases ?? {}) as Record<string, unknown>)) {
+    // an alias has no slash, so it can never shadow a provider/model name
+    if (!/^[\w.-]+$/.test(alias)) throw new Error(`${file}: alias "${alias}" may only use letters, digits, ".", "_" and "-"`);
+    if (!name(target)) throw new Error(`${file}: aliases.${alias} must be a provider/model name, e.g. openrouter/z-ai/glm-5.3`);
+  }
   if (escalation_skip_at !== undefined && (typeof escalation_skip_at !== "number" || !(escalation_skip_at > 0 && escalation_skip_at <= 1))) {
     throw new Error(`${file}: escalation_skip_at must be a number above 0 and at most 1`);
   }
@@ -158,6 +166,7 @@ function read(file: string): Partial<Omit<Config, "limits" | "retention">> & { l
     limits: caps,
     retention: keep,
     ...(models !== undefined && { models: roles as ModelsConfig }),
+    ...(aliases !== undefined && { aliases: aliases as Record<string, string> }),
     ...(escalation_skip_at !== undefined && { escalation_skip_at }),
     ...(guard_lines !== undefined && { guard_lines }),
     ...(hard_tasks !== undefined && { hard_tasks: hard_tasks as HardTasks }),

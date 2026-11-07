@@ -99,7 +99,7 @@ export function presetOf(provider: ProviderId, models: ModelsConfig = {}): Prese
   return (["balanced", "cheapest", "strongest"] as const).find((p) => key(PRESETS[provider][p]) === key(models)) ?? "custom";
 }
 
-const model = (provider: ProviderId, id: string): WorkerModel =>
+export const model = (provider: ProviderId, id: string): WorkerModel =>
   provider === "openrouter" ? { providerID: provider, id, options: OPENROUTER_PRIVATE } : { providerID: provider, id };
 
 /**
