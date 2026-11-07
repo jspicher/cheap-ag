@@ -78,6 +78,21 @@ test("in a batch the redo runs in landing order: CONFLICT names the job that lan
   expect(record(j2)).toMatchObject({ status: "CONFLICT", landed: false, redo: 1 });
 });
 
+test("a job whose worktree is only an empty folder (left by a failed removal) says so on land, instead of running git in the repo above", async () => {
+  const { repo, start, fake, inRepo } = await setup();
+  fake.script({ edit: "a.txt", content: "from A\n" }, { tool: "write" }, { error: { name: "APIError", message: "boom" } });
+  const server = await start();
+  const job = jobOf(await server.call("delegate", { plan: ".plan/p.md", steps: "1" }));
+  // what Windows leaves when it refuses to delete the folder: the worktree gone, its folder still there and empty
+  repo.git("worktree", "remove", "--force", inRepo(".cheapag", "worktrees", job));
+  mkdirSync(inRepo(".cheapag", "worktrees", job));
+
+  for (const action of ["apply", "discard"])
+    expect(await server.call("land", { job, action })).toBe(`FAIL ${job} reason: job ${job} has no worktree left (cleaned up, or only an empty folder remains); nothing to ${action}`);
+  expect(existsSync(inRepo("a.txt"))).toBe(false);
+  expect(repo.git("status", "--porcelain", "--", "a.txt")).toBe("");
+});
+
 test("land apply lands unlanded jobs in the given order, stopping at a conflict; land discard removes worktrees, never the linked deps", async () => {
   const { start, fake, inRepo, record } = await setup();
   mkdirSync(inRepo("node_modules", "pkg"), { recursive: true });

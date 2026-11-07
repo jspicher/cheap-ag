@@ -1141,7 +1141,7 @@ async function landOne(root: string, config: Config, id: string, action: LandInp
   // landing it now would put it ahead of its batch's later groups, out of step order
   if (record.batch && batches.has(record.batch)) throw new Error(`job ${id} belongs to batch ${record.batch}, still running; land it once the batch settles (jobs wait)`);
   const worktree = jobWorktree(root, id, record.baseline?.tree ?? "", config.link_dirs);
-  if (!worktree) throw new Error(`job ${id} has no worktree left (cleaned up); nothing to ${action}`);
+  if (!worktree) throw new Error(`job ${id} has no worktree left (cleaned up, or only an empty folder remains); nothing to ${action}`);
   const save = (update: Partial<StoredRecord>) => {
     const next = { ...record, ...update, worktree: null };
     const text = renderJob(next);
