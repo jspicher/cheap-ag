@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { describe, presetHere, readConsent, routeMoved } from "./consent.js";
+import { describe, presetHere, readConsent, readEngines, routeMoved } from "./consent.js";
 import { detectProvider, LOGIN_COMMAND, providerLabel, redact } from "./credentials.js";
 import { blockedFor, records } from "./jobs.js";
 import { isAlive } from "./platform.js";
@@ -38,6 +38,8 @@ export function status(args: string[]): number {
       : consent.provider !== provider ? `given for ${providerLabel(consent.provider)}, not the current provider; run /cheapag:allow`
       : routeMoved(root, consent) ? "given for other worker models (preset or models changed); run /cheapag:allow"
       : `${describe(consent)} (since ${consent.approvedAt.slice(0, 10)})`}`);
+    const codex = readEngines(root).codex;
+    if (codex) out(`codex: allowed (since ${codex.approvedAt.slice(0, 10)}); delegate with model codex/<model>`);
     const all = records(root).sort((a, b) => String(b.timing?.startedAt ?? "").localeCompare(String(a.timing?.startedAt ?? "")));
     const inFlight = (r: (typeof all)[number]) => r.status === "RUNNING" || r.status === "BLOCKED";
     const live = all.filter((r) => inFlight(r) && !!r.pid && isAlive(r.pid));

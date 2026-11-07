@@ -5,7 +5,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import type { ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { cleanProject, gitignoreHint } from "./cleanup.js";
 import { loadConfig, type HardTasks, type TakeOver } from "./config.js";
-import { presetHere } from "./consent.js";
+import { presetHere, readEngines } from "./consent.js";
 import { detectProvider, NO_PROVIDER, redact, type Provider } from "./credentials.js";
 import { delegate, jobs, landJobs, recoverJobs, reply } from "./jobs.js";
 import { ensureOpencode, stopOpencode } from "./opencode.js";
@@ -50,12 +50,21 @@ const MODEL = z
   .string()
   .max(200)
   .optional()
-  .describe("Only when the user names a worker model: a provider/model name (e.g. openrouter/z-ai/glm-5.3) or an alias from config aliases. It runs alone, without fallbacks; default: the configured routing");
+  .describe("Only when the user names a worker model: a provider/model name (e.g. openrouter/z-ai/glm-5.3), codex/<model> or codex/default for the Codex CLI (delegate only), or an alias from config aliases. It runs alone, without fallbacks; default: the configured routing");
 /** The optional `root` every repo-bound tool takes, so one session can send jobs into several git worktrees. */
 const ROOT = z
   .string()
   .optional()
   .describe("Absolute path of the git repository or worktree to work in (default: the session's directory). Consent, config and jobs come from that repository; pass the same root to jobs, land and reply for its jobs");
+
+/** Whether the repo at `dir` (default: the session's) allows Codex jobs; false outside a repository. */
+function codexHere(dir?: string) {
+  try {
+    return !!readEngines(dir ?? projectRoot(process.cwd())).codex;
+  } catch {
+    return false;
+  }
+}
 
 /** Claude Code defers MCP tools behind tool search unless a tool's `_meta` asks to load upfront (spec: delegate and research always load). */
 const ALWAYS_LOAD = { "anthropic/alwaysLoad": true };
@@ -146,7 +155,9 @@ export async function serve(host: "claude" | "codex" = "claude") {
         const dir = root === undefined ? undefined : callRoot(root);
         const opencode = await ensureOpencode(provider, dir);
         const at = dir === undefined ? "" : ` root=${dir}`;
-        return safeText(`OK cheapag ${version} opencode=${opencode.version} provider=${provider.provider} via=${provider.via} preset=${presetHere(provider.provider, dir)}${at}`);
+        // only when this repo opted in: Codex is a second engine, picked per call (docs/codex-worker.md)
+        const codex = codexHere(dir) ? " codex=allowed" : "";
+        return safeText(`OK cheapag ${version} opencode=${opencode.version} provider=${provider.provider} via=${provider.via} preset=${presetHere(provider.provider, dir)}${codex}${at}`);
       } catch (err) {
         return safeText(`FAIL reason: ${(err as Error).message}`);
       }
