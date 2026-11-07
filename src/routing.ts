@@ -181,6 +181,8 @@ export async function runRouted(session: Pick<Session, "run">, prompt: string, c
 /** The BUDGET reason once every allowed model is limited, with the earliest reset the provider gave. */
 function exhausted(provider: ProviderId, limits: Limit[]) {
   const ids = [...new Set(limits.map((l) => l.model.slice(l.model.indexOf("/") + 1)))].join(", ");
+  // a Codex job runs one model on the user's own OpenAI account: its limit is theirs, in Codex's words
+  if (limits.every((l) => l.model.startsWith("codex/"))) return `Codex usage limit for ${ids}: ${limits.at(-1)!.message}`;
   // OpenCode's next retry honours the provider's retry-after, i.e. the reset; a next only seconds away is just its backoff
   // (no retry-after was sent), so then quote the provider's own text instead
   const next = Math.min(...limits.map((l) => l.next).filter((n) => Number.isFinite(n) && n > Date.now() + 60_000));
@@ -276,6 +278,7 @@ function readLedger(): { at: number; model: string; costUsd: number }[] {
 export function escalationSkip(escalation: WorkerModel | undefined, c: Chain, skipAt: number, spent: Record<string, number>) {
   // a local server has an escalation model only when models.escalation names one
   if (!escalation && c.first.providerID === "local") return "esc: skipped, no escalation model for the local server (set models.escalation, or allow it with /cheapag:allow)";
+  if (!escalation && c.first.providerID === "codex") return "esc: skipped, Codex jobs have no escalation model";
   if (!escalation) return "esc: skipped, the escalation model is not allowed by this repo's consent";
   const name = modelName(escalation);
   if (c.limits.some((l) => l.model === name)) return `esc: skipped, ${escalation.id} hit its usage limit in this job`;
