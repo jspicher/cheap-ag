@@ -43,7 +43,8 @@ export function hermeticHome(logins: Logins = {}) {
 
 /** The CLI env for a hermetic home, e.g. a running server's, to run `allow` or `login` beside it. */
 export function homeEnv(home: string) {
-  const { OPENCODE_GO_API_KEY, OPENROUTER_API_KEY, DEEPSEEK_API_KEY, CHEAPAG_OPENCODE_URL, ...inherited } = process.env as Record<string, string>;
+  // a developer's CHEAPAG_DEBUG would turn the debug log on in every test server; tests that want it pass it in env
+  const { OPENCODE_GO_API_KEY, OPENROUTER_API_KEY, DEEPSEEK_API_KEY, CHEAPAG_OPENCODE_URL, CHEAPAG_DEBUG, ...inherited } = process.env as Record<string, string>;
   return {
     ...inherited,
     XDG_DATA_HOME: join(home, "data"),

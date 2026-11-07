@@ -4,8 +4,8 @@ import { createWriteStream, existsSync, mkdirSync, writeFileSync } from "node:fs
 import { createRequire } from "node:module";
 import { arch } from "node:os";
 import { dirname, join } from "node:path";
-import { localServer } from "./config.js";
-import { redact, type Provider } from "./credentials.js";
+import { localServer, userConfigFile } from "./config.js";
+import { redactLog, savedSecrets, type Provider } from "./credentials.js";
 import { baselinePermission } from "./permissions.js";
 import { gitBash, killProcessGroup, opencodePlatform } from "./platform.js";
 import { fullRoute, modelName, routeModels, type Route } from "./routing.js";
@@ -263,23 +263,34 @@ export function serveArgs(env: NodeJS.ProcessEnv = process.env) {
   return env.CHEAPAG_DEBUG === "1" ? [...args, "--print-logs", "--log-level", "DEBUG"] : args;
 }
 
+/** This process's OpenCode debug log while CHEAPAG_DEBUG=1 (ping reports it), else undefined. */
+export let debugLogPath: string | undefined;
+
 /**
- * With CHEAPAG_DEBUG=1, a writer that appends the server's stderr to `<configDir>/server.log` (the server is shared, so one
- * log per repo's config dir), whole lines at a time through redact() so a key split across chunks is still caught.
+ * Where a server's debug log goes: one file per cheapag process beside the user config, never inside a repo, since one
+ * OpenCode server serves every root a session passes.
+ */
+export const debugLogFile = (stamp = new Date()) =>
+  join(dirname(userConfigFile()), "logs", `opencode-${stamp.toISOString().replace(/[:.]/g, "-")}-${process.pid}.log`);
+
+/**
+ * With CHEAPAG_DEBUG=1, a writer that appends the server's stderr to `file`, whole lines at a time through redactLog()
+ * (the saved keys, the server password and any credential-shaped value), so a secret split across chunks is still caught.
  * Call it with no chunk on exit to flush. Undefined when the flag is off: nothing is written.
  */
-export function debugLog(configDir: string, env: NodeJS.ProcessEnv = process.env) {
+export function debugLog(file: string, secrets: string[], env: NodeJS.ProcessEnv = process.env) {
   if (env.CHEAPAG_DEBUG !== "1") return undefined;
-  const stream = createWriteStream(join(configDir, "server.log"), { flags: "a" });
+  mkdirSync(dirname(file), { recursive: true });
+  const stream = createWriteStream(file, { flags: "a", mode: 0o600 });
   stream.on("error", () => {}); // a debug log must never take the server down
   stream.write(`--- cheapag: opencode serve started ${new Date().toISOString()} ---\n`);
   let partial = "";
   return (chunk?: string) => {
-    if (chunk === undefined) return void stream.end(partial && redact(partial));
+    if (chunk === undefined) return void stream.end(partial && redactLog(partial, secrets));
     const text = partial + chunk;
     const cut = text.lastIndexOf("\n") + 1;
     partial = text.slice(cut);
-    if (cut) stream.write(redact(text.slice(0, cut)));
+    if (cut) stream.write(redactLog(text.slice(0, cut), secrets));
   };
 }
 
@@ -318,7 +329,9 @@ function spawnServer(configDir: string, password: string) {
       reject(err);
     };
     // keep draining both pipes for the server's lifetime (a full pipe blocks it), but only buffer until it listens
-    const log = debugLog(configDir);
+    const file = debugLogFile();
+    const log = debugLog(file, [password, ...savedSecrets()]);
+    if (log) debugLogPath = file;
     proc.stderr!.on("data", (chunk) => {
       log?.(String(chunk));
       if (!listening) output += chunk;
