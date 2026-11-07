@@ -1,11 +1,11 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { arch } from "node:os";
 import { dirname, join } from "node:path";
 import { localServer } from "./config.js";
-import type { Provider } from "./credentials.js";
+import { redact, type Provider } from "./credentials.js";
 import { baselinePermission } from "./permissions.js";
 import { gitBash, killProcessGroup, opencodePlatform } from "./platform.js";
 import { fullRoute, modelName, routeModels, type Route } from "./routing.js";
@@ -257,12 +257,38 @@ async function boot(projectDir: string, config: string): Promise<Opencode> {
   return { url, password, version };
 }
 
+/** `opencode serve`'s arguments; CHEAPAG_DEBUG=1 adds OpenCode's own debug logging, printed to stderr for `debugLog`. */
+export function serveArgs(env: NodeJS.ProcessEnv = process.env) {
+  const args = ["serve", "--hostname", "127.0.0.1", "--port", "0"];
+  return env.CHEAPAG_DEBUG === "1" ? [...args, "--print-logs", "--log-level", "DEBUG"] : args;
+}
+
+/**
+ * With CHEAPAG_DEBUG=1, a writer that appends the server's stderr to `<configDir>/server.log` (the server is shared, so one
+ * log per repo's config dir), whole lines at a time through redact() so a key split across chunks is still caught.
+ * Call it with no chunk on exit to flush. Undefined when the flag is off: nothing is written.
+ */
+export function debugLog(configDir: string, env: NodeJS.ProcessEnv = process.env) {
+  if (env.CHEAPAG_DEBUG !== "1") return undefined;
+  const stream = createWriteStream(join(configDir, "server.log"), { flags: "a" });
+  stream.on("error", () => {}); // a debug log must never take the server down
+  stream.write(`--- cheapag: opencode serve started ${new Date().toISOString()} ---\n`);
+  let partial = "";
+  return (chunk?: string) => {
+    if (chunk === undefined) return void stream.end(partial && redact(partial));
+    const text = partial + chunk;
+    const cut = text.lastIndexOf("\n") + 1;
+    partial = text.slice(cut);
+    if (cut) stream.write(redact(text.slice(0, cut)));
+  };
+}
+
 function spawnServer(configDir: string, password: string) {
   // on Windows point the worker at Git Bash, so it runs and parses its commands as bash, like the rest of cheapag
   const bash = process.platform === "win32" ? gitBash() : undefined;
   return new Promise<string>((resolve, reject) => {
     // detached: its own process group, so stopOpencode() also takes down anything it spawned
-    const proc = spawn(opencodeBinary(), ["serve", "--hostname", "127.0.0.1", "--port", "0"], {
+    const proc = spawn(opencodeBinary(), serveArgs(), {
       detached: true,
       // a detached console child would open a window on Windows
       windowsHide: true,
@@ -292,7 +318,12 @@ function spawnServer(configDir: string, password: string) {
       reject(err);
     };
     // keep draining both pipes for the server's lifetime (a full pipe blocks it), but only buffer until it listens
-    proc.stderr!.on("data", (chunk) => listening || (output += chunk));
+    const log = debugLog(configDir);
+    proc.stderr!.on("data", (chunk) => {
+      log?.(String(chunk));
+      if (!listening) output += chunk;
+    });
+    if (log) proc.on("exit", () => log());
     proc.stdout!.on("data", (chunk) => {
       if (listening) return;
       output += chunk;

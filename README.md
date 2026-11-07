@@ -236,6 +236,9 @@ Never. Changes land uncommitted. Your git, your call.
 **Why not just use Sonnet for everything?**
 Sonnet still costs real usage on every line it types. The cheap model types for half a cent. Sonnet only gets called when the cheap model is stuck.
 
+**A worker was denied a command its permissions allow. How do I see why?**
+Set `CHEAPAG_DEBUG=1` in the server's environment and restart it. The bundled OpenCode then runs with its own debug logging, written (keys redacted) to `.cheapag/opencode/server.log` in the project. Off by default.
+
 **Can I use it at work, or build on it?**
 Yes. It's MIT licensed: use it, change it, share it, at any company, for free ([MIT License](./LICENSE)).
 
