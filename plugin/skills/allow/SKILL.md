@@ -1,7 +1,7 @@
 ---
 name: allow
-description: Opt this repository in to sending code to Cheap Agent's worker models - all models, --zdr-only (zero-retention only), or --models provider/model,...
-argument-hint: "[--zdr-only | --models provider/model,...]"
+description: Opt this repository in to sending code to Cheap Agent's worker models - all models, --zdr-only (zero-retention only), or --models provider/model,...; --codex also allows Codex CLI workers (code goes to OpenAI)
+argument-hint: "[--zdr-only | --models provider/model,...] [--codex]"
 disable-model-invocation: true
 allowed-tools: Bash(npx -y cheap-agent@1.3.2 allow) Bash(npx -y cheap-agent@1.3.2 allow *)
 ---
