@@ -87,10 +87,22 @@ test("a job whose worktree is only an empty folder (left by a failed removal) sa
   repo.git("worktree", "remove", "--force", inRepo(".cheapag", "worktrees", job));
   mkdirSync(inRepo(".cheapag", "worktrees", job));
 
-  for (const action of ["apply", "discard"])
-    expect(await server.call("land", { job, action })).toBe(`FAIL ${job} reason: job ${job} has no worktree left (cleaned up, or only an empty folder remains); nothing to ${action}`);
+  expect(await server.call("land", { job, action: "apply" })).toBe(`FAIL ${job} reason: job ${job} has no worktree left (cleaned up, or only an empty folder remains); nothing to apply`);
   expect(existsSync(inRepo("a.txt"))).toBe(false);
   expect(repo.git("status", "--porcelain", "--", "a.txt")).toBe("");
+  // discard still clears the leftover folder and records the job as discarded, so it stops showing as unlanded
+  expect(await server.call("land", { job, action: "discard" })).toBe(`OK ${job} discarded`);
+  expect(existsSync(inRepo(".cheapag", "worktrees", job))).toBe(false);
+  expect(await server.call("land", { job, action: "discard" })).toBe(`FAIL ${job} reason: job ${job} was already discarded`);
+});
+
+test("land discard of a job whose worktree folder is gone entirely still has nothing to discard", async () => {
+  const { repo, start, fake, inRepo } = await setup();
+  fake.script({ edit: "a.txt", content: "from A\n" }, { tool: "write" }, { error: { name: "APIError", message: "boom" } });
+  const server = await start();
+  const job = jobOf(await server.call("delegate", { plan: ".plan/p.md", steps: "1" }));
+  repo.git("worktree", "remove", "--force", inRepo(".cheapag", "worktrees", job));
+  expect(await server.call("land", { job, action: "discard" })).toBe(`FAIL ${job} reason: job ${job} has no worktree left (cleaned up, or only an empty folder remains); nothing to discard`);
 });
 
 test("land apply lands unlanded jobs in the given order, stopping at a conflict; land discard removes worktrees, never the linked deps", async () => {
