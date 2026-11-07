@@ -187,6 +187,11 @@ Optional. Put a `cheapag.json` in a project:
 | `takeover` | `"sonnet"` | Who finishes a step the cheap model couldn't: a Sonnet helper, or `"self"` (your frontier model, capped at 15 tool calls). Claude Code only; Codex finishes it itself. |
 | `limits.max_turns` | `25` | The most turns the cheap model gets per step. |
 | `models` | from setup | Which cheap models to use. Switch with `npx cheap-agent login --preset strongest`. |
+| `aliases` | none | Short names for `model` (below), e.g. `{"glm": "openrouter/z-ai/glm-5.3", "flash": "openrouter/deepseek/deepseek-v4.1-flash"}`. |
+
+### Picking the model for one task
+
+Ask for it ("use GLM for this"), and your agent passes `model` on `delegate` or `research`: a `provider/model` name or one of your `aliases`. That model runs the task alone, with no fallbacks, so a rate limit ends it as BUDGET instead of moving to another model. The stronger escalation model still takes a step the first model couldn't. The model has to be on the provider you're logged in with and allowed by the project's consent. Without `model`, the settings above decide.
 
 ## Orchestrators and git worktrees
 

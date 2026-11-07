@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, basename, join, relative } from "node:path";
 import { loadConfig, type Config } from "./config.js";
-import { consentGate } from "./consent.js";
+import { chooseModel, consentGate } from "./consent.js";
 import { redact, type Provider } from "./credentials.js";
 import { records } from "./jobs.js";
 import { holdOpencode, type Opencode } from "./opencode.js";
@@ -28,7 +28,7 @@ const DEFAULT_WORDS = 200;
 /** At most this many refs: the refs line must stay within the 200-char line rule. */
 const MAX_REFS = 5;
 
-export type ResearchInput = { question: string; paths?: string; max_words?: number; root?: string };
+export type ResearchInput = { question: string; paths?: string; max_words?: number; root?: string; model?: string };
 type Answer = Pick<ResearchRecord, "status" | "answer" | "refs" | "confidence" | "repro" | "deadEnds" | "partial">;
 
 export async function research(
@@ -37,7 +37,9 @@ export async function research(
 ): Promise<string> {
   const root = callRoot(input.root);
   // first: an unapproved repo gets CONSENT before any record, OpenCode boot or provider call
-  const gate = consentGate(root, ctx.provider.provider);
+  const consented = consentGate(root, ctx.provider.provider);
+  if ("block" in consented) return consented.block;
+  const gate = chooseModel(root, ctx.provider.provider, consented.route, input.model);
   if ("block" in gate) return gate.block;
   const scope: string[] = [];
   const resolvedPaths: string[] = [];

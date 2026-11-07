@@ -7,7 +7,7 @@ import { needsOf, overlap, parsePlan, PLAN_FORMAT, selectGroups, type Group, typ
 import { failBlock, renderBatch, renderJob, type BatchRecord, type JobRecord } from "./report.js";
 import { loadConfig, type Config } from "./config.js";
 import { projectScripts, workerRuleset } from "./permissions.js";
-import { consentGate } from "./consent.js";
+import { chooseModel, consentGate } from "./consent.js";
 import { chain, DIFFICULTIES, escalationSkip, modelName, recordSpend, runRouted, tierModel, usedBalance, type Difficulty, type Route } from "./routing.js";
 import { checkAllows, envFailure, errorTail, runVerify, sameFailure, verifyCommands, type VerifyRun } from "./verify.js";
 import { finishReport, openSession, releaseDirectory, type FinishReport, type Question, type RunResult, type Session } from "./worker.js";
@@ -45,7 +45,7 @@ const FIX_WORDS = /\b(bug|fix(?:es|ed|ing)?|fail(?:s|ed|ing|ure)?|error|crash(?:
  */
 export type DelegateInput = { plan: string; steps: string; note?: string; wait?: boolean; brief?: string; source?: string; difficulty?: Difficulty };
 /** What the tool takes: a plan file and steps, or (one step, no plan file) an inline task with optional files and done-when. */
-export type DelegateRequest = Partial<DelegateInput> & { task?: string; files?: string; done_when?: string; root?: string };
+export type DelegateRequest = Partial<DelegateInput> & { task?: string; files?: string; done_when?: string; root?: string; model?: string };
 
 /** A brief longer than this is cut in the worker's prompt. */
 const MAX_BRIEF = 6_000;
@@ -99,7 +99,9 @@ export async function delegate(req: DelegateRequest, ctx: WorkerContext): Promis
   // first: an unapproved repo gets CONSENT before any job, worktree, OpenCode boot or provider call
   const gate = consentGate(root, ctx.provider.provider);
   if ("block" in gate) return gate.block;
-  const { route } = gate;
+  const chosen = chooseModel(root, ctx.provider.provider, gate.route, req.model);
+  if ("block" in chosen) return chosen.block;
+  const { route } = chosen;
   let input: DelegateInput;
   const brief = resolveBrief(root, req.brief);
   if ("fail" in brief) return failBlock(brief.fail);

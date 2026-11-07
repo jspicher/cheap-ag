@@ -3,7 +3,7 @@ import { basename, join } from "node:path";
 import { providerLabel, type Provider } from "./credentials.js";
 import { failBlock, renderConsent } from "./report.js";
 import { loadConfig, localServer } from "./config.js";
-import { fullRoute, modelName, presetOf, routeModels, type Route, type WorkerModel } from "./routing.js";
+import { fullRoute, model, modelName, presetOf, routeModels, type Route, type WorkerModel } from "./routing.js";
 import { projectRoot } from "./workspace.js";
 
 /**
@@ -114,6 +114,39 @@ export function consentGate(root: string, provider: Provider["provider"]): { blo
       hard: pick([full.hard])[0],
     },
   };
+}
+
+/**
+ * A model the caller picked for one delegate or research call: a provider/model name, or an alias from config `aliases`.
+ * It must be on the provider this server runs on and allowed by the repo's consent, which consentGate has already found.
+ * The picked model runs alone: no fallbacks (a limit is BUDGET, never a silent switch) and no tier models; the
+ * escalation model stays.
+ */
+export function chooseModel(root: string, provider: Provider["provider"], route: Route, requested?: string): { block: string } | { route: Route } {
+  if (requested === undefined) return { route };
+  const aliases = configuredAliases(root);
+  const name = aliases[requested] ?? requested;
+  if (!/^[\w.-]+\/\S+$/.test(name)) {
+    const known = Object.keys(aliases);
+    return { block: failBlock(`model ${requested} is neither a provider/model name nor an alias (${known.length ? `aliases: ${known.join(", ")}` : "no aliases are set in config"})`) };
+  }
+  const on = name.slice(0, name.indexOf("/"));
+  if (on !== provider) return { block: failBlock(`model ${name} is on ${on}, but Cheap Agent runs on ${providerLabel(provider)}; pick a ${provider}/ model`) };
+  const consent = readConsent(root)!;
+  const picked = model(provider, name.slice(on.length + 1));
+  if (!allowed(provider, consent, picked)) return { block: failBlock(`model ${name} is not allowed under this repo's consent (${describe(consent)}); ask the user to widen it with /cheapag:allow`) };
+  const m = consent.mode === "zdr-only" && provider === "openrouter" ? withZdr(picked) : picked;
+  const escalation = route.escalation && modelName(route.escalation) !== modelName(m) ? route.escalation : undefined;
+  return { route: { implement: m, fallbacks: [], escalation, research: m, researchFallbacks: [] } };
+}
+
+/** The config's `aliases`; a damaged config counts as none here, the job's own config load reports it. */
+function configuredAliases(root: string): Record<string, string> {
+  try {
+    return loadConfig(root).aliases;
+  } catch {
+    return {};
+  }
 }
 
 /** The config's `models` (E4); a damaged config counts as none here, the job's own config load reports it. */
