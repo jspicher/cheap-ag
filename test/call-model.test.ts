@@ -43,10 +43,11 @@ test("a provider/model name runs the job on that model alone: no fallbacks, the 
   const text = await delegate("openrouter/z-ai/glm-5.3");
   expect(text).toMatch(/^OK /);
   expect(fake.recorded.sessions[0].model).toEqual({ providerID: "openrouter", id: "z-ai/glm-5.3" });
-  // OpenCode is booted with exactly the models the job may use (OpenRouter lists each one, for its routing options)
+  // OpenCode keeps the consented configuration and also declares the picked model (OpenRouter lists each one, for its
+  // routing options), so it never reboots under other jobs; only the picked model ran
   const config = JSON.parse(readFileSync(join(repo.dir, ".cheapag", "opencode", "opencode.json"), "utf8"));
-  expect(Object.keys(config.provider.openrouter.models).sort()).toEqual(["z-ai/glm-5.3", "z-ai/glm-5.3-flash"]);
-  expect(config.small_model).toBe("openrouter/z-ai/glm-5.3");
+  expect(config.provider.openrouter.models["z-ai/glm-5.3"].options).toBeDefined();
+  expect(fake.recorded.sessions.map((s) => s.model?.id)).toEqual(["z-ai/glm-5.3"]);
 });
 
 test("a picked model that hits a provider limit stops as BUDGET instead of falling back to another model", async () => {
@@ -94,6 +95,17 @@ test("on OpenRouter with zero-retention only, a picked model keeps the zdr routi
   expect(await delegate("openrouter/z-ai/glm-5.3")).toMatch(/^OK /);
   const config = JSON.parse(readFileSync(join(repo.dir, ".cheapag", "opencode", "opencode.json"), "utf8"));
   expect(config.provider.openrouter.models["z-ai/glm-5.3"].options.provider).toMatchObject({ data_collection: "deny", zdr: true });
+});
+
+test("a picked model runs while another job holds OpenCode: it needs no reboot into another configuration", async () => {
+  const { server, fake, delegate } = await scenario();
+  fake.script({ wait: 2_000 }, EDIT, FINISH);
+  const first = await callText(server.client, "delegate", { plan: "plan.md", steps: "1", wait: false });
+  expect(first).toMatch(/^RUNNING /);
+  fake.script(EDIT, FINISH);
+  const text = await delegate("opencode-go/glm-5.3");
+  expect(text).not.toContain("model configuration changed");
+  expect(fake.recorded.sessions.map((s) => s.model?.id)).toContain("glm-5.3");
 });
 
 test("config: aliases map short names to provider/model names", () => {

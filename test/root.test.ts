@@ -46,6 +46,16 @@ test("delegate with root runs in that repository and lands there, not in the ser
   expect(await callText(server.client, "land", { job, action: "apply" })).toMatch(new RegExp(`^FAIL ${job} reason: job ${job} not found`));
 });
 
+test("the gitignore offer comes once per repository: a root that does not ignore .cheapag/ gets it after the cwd's result", async () => {
+  const { here, there, server } = await scenario([]);
+  writeFileSync(join(there.dir, ".git", "info", "exclude"), "");
+  const hint = "hint: .cheapag/ (Cheap Agent's runtime state) is not gitignored";
+  expect(await callText(server.client, "jobs", { action: "list" })).toBe("no jobs yet");
+  expect(await callText(server.client, "jobs", { action: "list", root: there.dir })).toContain(hint);
+  expect(await callText(server.client, "jobs", { action: "list", root: there.dir })).not.toContain(hint);
+  expect(await callText(server.client, "jobs", { action: "list", root: here.dir })).toBe("no jobs yet");
+});
+
 test("a live job is only reachable with its own root: cancel from another root leaves it running", async () => {
   const { here, there, server } = await scenario([{ edit: "src/there.ts", content: "export const there = 1;\n" }, { tool: "write" }, { wait: 3_000 }, DONE]);
   const running = await callText(server.client, "delegate", { task: "Add src/there.ts", root: there.dir, wait: false });

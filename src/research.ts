@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, basename, join, relative } from "node:path";
 import { loadConfig, type Config } from "./config.js";
-import { chooseModel, consentGate } from "./consent.js";
+import { chooseModel, consentGate, opencodeRoute } from "./consent.js";
 import { redact, type Provider } from "./credentials.js";
 import { records } from "./jobs.js";
 import { holdOpencode, type Opencode } from "./opencode.js";
@@ -69,7 +69,7 @@ export async function research(
   const { limits } = config;
   const maxWords = Math.min(input.max_words ?? DEFAULT_WORDS, MAX_WORDS);
 
-  const opencode = await ctx.opencode(gate.route);
+  const opencode = await ctx.opencode(opencodeRoute(consented.route, gate.route));
   const release = holdOpencode();
   const { id, dir } = newResearch(root);
   const write = (name: string, value: unknown) => writeFileSync(join(dir, name), redact(typeof value === "string" ? value : JSON.stringify(value, null, 2) + "\n"));

@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 import { redact, type Provider } from "./credentials.js";
 import { holdOpencode, type Opencode } from "./opencode.js";
@@ -7,7 +7,7 @@ import { needsOf, overlap, parsePlan, PLAN_FORMAT, selectGroups, type Group, typ
 import { failBlock, renderBatch, renderJob, type BatchRecord, type JobRecord } from "./report.js";
 import { loadConfig, type Config } from "./config.js";
 import { projectScripts, workerRuleset } from "./permissions.js";
-import { chooseModel, consentGate } from "./consent.js";
+import { chooseModel, consentGate, opencodeRoute } from "./consent.js";
 import { chain, DIFFICULTIES, escalationSkip, modelName, recordSpend, runRouted, tierModel, usedBalance, type Difficulty, type Route } from "./routing.js";
 import { checkAllows, envFailure, errorTail, runVerify, sameFailure, verifyCommands, type VerifyRun } from "./verify.js";
 import { finishReport, openSession, releaseDirectory, type FinishReport, type Question, type RunResult, type Session } from "./worker.js";
@@ -141,7 +141,7 @@ export async function delegate(req: DelegateRequest, ctx: WorkerContext): Promis
   if (busy) return failBlock(`${busy} in the working tree; finish or abort it, then delegate again`);
 
   // one boot with one route for every group: a config change would restart OpenCode under the batch's running jobs
-  const opencode = await ctx.opencode(route);
+  const opencode = await ctx.opencode(opencodeRoute(gate.route, route));
   const release = holdOpencode();
   const shared = { root, input, plan, config, route, opencode, provider: ctx.provider, progress: ctx.progress };
   // wait=false: every group is RUNNING the moment it is created
@@ -1143,13 +1143,21 @@ async function landOne(root: string, config: Config, id: string, action: LandInp
   // landing it now would put it ahead of its batch's later groups, out of step order
   if (record.batch && batches.has(record.batch)) throw new Error(`job ${id} belongs to batch ${record.batch}, still running; land it once the batch settles (jobs wait)`);
   const worktree = jobWorktree(root, id, record.baseline?.tree ?? "", config.link_dirs);
-  if (!worktree) throw new Error(`job ${id} has no worktree left (cleaned up, or only an empty folder remains); nothing to ${action}`);
   const save = (update: Partial<StoredRecord>) => {
     const next = { ...record, ...update, worktree: null };
     const text = renderJob(next);
     writeWhole(join(dir, "result.json"), redact(JSON.stringify({ ...next, blockTokensApprox: Math.ceil(text.length / 4) }, null, 2) + "\n"));
     writeWhole(join(dir, "result.txt"), redact(text + "\n"));
   };
+  // a folder left without its `.git` (a removal Windows cut short) is no worktree, but discard still clears it away
+  const leftover = join(root, ".cheapag", "worktrees", id);
+  if (!worktree && action === "discard" && existsSync(leftover)) {
+    rmSync(leftover, { recursive: true, force: true });
+    git(root, ["worktree", "prune"]);
+    save({ discarded: true });
+    return `OK ${id} discarded`;
+  }
+  if (!worktree) throw new Error(`job ${id} has no worktree left (cleaned up, or only an empty folder remains); nothing to ${action}`);
   if (action === "discard") {
     await releaseDirectory(worktree.path); // release before the worktree is removed
     removeWorktree(root, worktree); // dependency links are unlinked first
