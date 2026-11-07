@@ -61,3 +61,38 @@ export function detectProvider(): Provider | undefined {
 export function redact(text: string) {
   return text.replace(/\bsk-[A-Za-z0-9_-]{16,}/g, "[redacted]");
 }
+
+/**
+ * Every secret string in OpenCode's credential store (API keys and OAuth tokens of any shape), for redactLog. Read only by
+ * the debug log's writer, which keeps them in memory to mask them; never logged, returned to a tool or written anywhere.
+ */
+export function savedSecrets(): string[] {
+  try {
+    const saved = existsSync(authFile()) ? JSON.parse(readFileSync(authFile(), "utf8")) : {};
+    const out: string[] = [];
+    const walk = (v: unknown) => {
+      if (typeof v === "string") {
+        if (v.length >= 8 && !/^(api|oauth|wellknown)$/.test(v)) out.push(v);
+      } else if (v && typeof v === "object") Object.values(v).forEach(walk);
+    };
+    walk(saved);
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+// a credential's value after its name, in headers, JSON or key=value text: the name and separator stay, the value goes
+const NAMED_SECRET = /\b(authorization|proxy-authorization|x-api-key|api[-_]?key|access[-_]?token|refresh[-_]?token|token|password|secret)(["']?\s*[:=]\s*["']?)(?:bearer\s+|basic\s+)?[^\s"',;}&]+/gi;
+
+/**
+ * Masks a debug log line: the exact `secrets` (the saved keys and the server password, whatever their format), credential
+ * values after a name such as Authorization or apiKey, any Bearer token, and redact()'s sk- keys.
+ */
+export function redactLog(text: string, secrets: string[]) {
+  let out = text;
+  for (const s of secrets) if (s) out = out.split(s).join("[redacted]");
+  return redact(out)
+    .replace(NAMED_SECRET, (_, name: string, sep: string) => `${name}${sep}[redacted]`)
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/g, "Bearer [redacted]");
+}

@@ -8,7 +8,7 @@ import { loadConfig, type HardTasks, type TakeOver } from "./config.js";
 import { presetHere } from "./consent.js";
 import { detectProvider, NO_PROVIDER, redact, type Provider } from "./credentials.js";
 import { delegate, jobs, landJobs, recoverJobs, reply } from "./jobs.js";
-import { ensureOpencode, stopOpencode } from "./opencode.js";
+import { debugLogPath, ensureOpencode, stopOpencode } from "./opencode.js";
 import { PLAN_FORMAT } from "./plan.js";
 import { failBlock } from "./report.js";
 import { MAX_WORDS, research } from "./research.js";
@@ -146,7 +146,8 @@ export async function serve(host: "claude" | "codex" = "claude") {
         const dir = root === undefined ? undefined : callRoot(root);
         const opencode = await ensureOpencode(provider, dir);
         const at = dir === undefined ? "" : ` root=${dir}`;
-        return safeText(`OK cheapag ${version} opencode=${opencode.version} provider=${provider.provider} via=${provider.via} preset=${presetHere(provider.provider, dir)}${at}`);
+        const debug = debugLogPath ? ` debug_log=${debugLogPath}` : "";
+        return safeText(`OK cheapag ${version} opencode=${opencode.version} provider=${provider.provider} via=${provider.via} preset=${presetHere(provider.provider, dir)}${at}${debug}`);
       } catch (err) {
         return safeText(`FAIL reason: ${(err as Error).message}`);
       }
