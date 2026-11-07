@@ -193,6 +193,15 @@ Optional. Put a `cheapag.json` in a project:
 
 Ask for it ("use GLM for this"), and your agent passes `model` on `delegate` or `research`: a `provider/model` name or one of your `aliases`. That model runs the task alone, with no fallbacks, so a rate limit ends it as BUDGET instead of moving to another model. The stronger escalation model still takes a step the first model couldn't. The model has to be on the provider you're logged in with and allowed by the project's consent. Without `model`, the settings above decide.
 
+### Running a task on Codex instead
+
+With the [Codex CLI](https://github.com/openai/codex) installed and signed in, `delegate` can hand a task to Codex instead of OpenCode: pass `model: "codex/<model>"` (e.g. `codex/gpt-5.5-codex`), or `codex/default` (or just `codex`) for the model your `~/.codex/config.toml` names. An alias works too: `{"cx": "codex/default"}`.
+
+- Code goes to OpenAI, so it needs its own opt-in: run `npx cheap-agent allow --codex` (or `/cheapag:allow --codex`) in the project. It doesn't change, or need, the consent for your Cheap Agent provider.
+- Codex runs in the job's worktree with `codex exec --sandbox workspace-write`, no approvals and no network, and without your Codex config, MCP servers or hooks (so nothing else sees the code and no hook writes into the worktree). Set `CHEAPAG_CODEX_BIN` if `codex` isn't on your PATH.
+- Caps, checks, self-fixes and landing work as usual. A Codex task never asks a question (it notes ambiguities under risks), has no escalation model, and shows `cost=$0.000`: a ChatGPT plan reports no price. Your plan's usage limit ends the job as BUDGET.
+- `delegate` only for now: `research` on a `codex/` model is refused. Design notes: [docs/codex-worker.md](docs/codex-worker.md).
+
 ## Orchestrators and git worktrees
 
 Cheap Agent works in the repository your session started in. If one session runs several tasks, each in its own git worktree (an orchestrator handing tickets to subagents, say), pass `root` with the worktree's absolute path on `delegate`, `research`, `jobs`, `land` and `reply`. Jobs then run, land and keep their records in that worktree, and the session's own checkout is untouched. Each worktree needs its own consent (`/cheapag:allow` there, or a copied `.cheapag/consent.json`). Without `root`, nothing changes.

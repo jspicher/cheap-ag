@@ -110,5 +110,6 @@ more `resume` (bounded by its own 30 s timeout, as for OpenCode).
 - Escalation for Codex jobs (a second model or `model_reasoning_effort=high` on resume is the obvious next step).
 - The server still needs an OpenCode provider login to take tool calls (`detectProvider`), and job records still
   name that provider in `provider=`; the model fields say `codex/…`.
-- `land`'s batch integration fix job runs on the OpenCode route.
+- A Codex batch's integration fix job runs on Codex when `delegate` starts it, but on the OpenCode route when `land`
+  starts it (landing a batch's last group), since `land` takes no `model`.
 - `cheapag status`/`ping` only show whether Codex is allowed here; they do not run `codex --version`.
