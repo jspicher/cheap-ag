@@ -33,7 +33,7 @@ type Answer = Pick<ResearchRecord, "status" | "answer" | "refs" | "confidence" |
 
 export async function research(
   input: ResearchInput,
-  ctx: { provider: Provider; opencode: (route: Route) => Promise<Opencode>; progress: (turns: number, message: string) => void },
+  ctx: { provider: Provider; opencode: (route: Route, picked?: string) => Promise<Opencode>; progress: (turns: number, message: string) => void },
 ): Promise<string> {
   const root = callRoot(input.root);
   // first: an unapproved repo gets CONSENT before any record, OpenCode boot or provider call
@@ -69,7 +69,7 @@ export async function research(
   const { limits } = config;
   const maxWords = Math.min(input.max_words ?? DEFAULT_WORDS, MAX_WORDS);
 
-  const opencode = await ctx.opencode(opencodeRoute(consented.route, gate.route));
+  const opencode = await ctx.opencode(opencodeRoute(consented.route, gate.route), input.model === undefined ? undefined : modelName(gate.route.implement));
   const release = holdOpencode();
   const { id, dir } = newResearch(root);
   const write = (name: string, value: unknown) => writeFileSync(join(dir, name), redact(typeof value === "string" ? value : JSON.stringify(value, null, 2) + "\n"));

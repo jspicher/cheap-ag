@@ -124,7 +124,7 @@ export async function serve(host: "claude" | "codex" = "claude") {
     return dir;
   };
   /** OpenCode boots once per process; its config goes under the repo of the call that boots it. */
-  const opencodeFor = (provider: Provider, root: string) => (route: Route) => ensureOpencode(provider, root, route);
+  const opencodeFor = (provider: Provider, root: string) => (route: Route, picked?: string) => ensureOpencode(provider, root, route, picked);
   /** Worker progress as MCP progress notifications to the calling request, when it asked for them. */
   const progressTo = (extra: { _meta?: { progressToken?: string | number }; sendNotification: (n: ServerNotification) => Promise<void> }) =>
     (progress: number, message: string) => {

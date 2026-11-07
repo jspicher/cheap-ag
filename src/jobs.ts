@@ -92,7 +92,7 @@ function inlinePlan(root: string, req: DelegateRequest): { plan: string } | { fa
 }
 
 /** What a tool call that may start workers gets from the server. */
-export type WorkerContext = { provider: Provider; opencode: (route: Route) => Promise<Opencode>; progress: Progress };
+export type WorkerContext = { provider: Provider; opencode: (route: Route, picked?: string) => Promise<Opencode>; progress: Progress };
 
 export async function delegate(req: DelegateRequest, ctx: WorkerContext): Promise<string> {
   const root = callRoot(req.root);
@@ -141,9 +141,9 @@ export async function delegate(req: DelegateRequest, ctx: WorkerContext): Promis
   if (busy) return failBlock(`${busy} in the working tree; finish or abort it, then delegate again`);
 
   // one boot with one route for every group: a config change would restart OpenCode under the batch's running jobs
-  const opencode = await ctx.opencode(opencodeRoute(gate.route, route));
-  const release = holdOpencode();
   const picked = req.model === undefined ? undefined : modelName(route.implement);
+  const opencode = await ctx.opencode(opencodeRoute(gate.route, route), picked);
+  const release = holdOpencode();
   const shared = { root, input, plan, config, route, opencode, provider: ctx.provider, progress: ctx.progress, picked };
   // wait=false: every group is RUNNING the moment it is created
   if (groups.length === 1) {
@@ -1123,7 +1123,7 @@ async function integrateLater(root: string, config: Config, batch: string, ctx: 
     const chosen = chooseModel(root, ctx.provider.provider, gate.route, record.model);
     if ("block" in chosen) throw new Error(`the batch's model for a fix job: ${chosen.block.split("\n")[0]}`);
     const plan = parsePlan(readFileSync(join(root, record.plan), "utf8"));
-    const opencode = await ctx.opencode(opencodeRoute(gate.route, chosen.route));
+    const opencode = await ctx.opencode(opencodeRoute(gate.route, chosen.route), record.model);
     release = holdOpencode();
     return { root, input: { plan: record.plan, steps: record.steps }, plan, config, route: chosen.route, opencode, provider: ctx.provider, progress: ctx.progress, picked: record.model };
   };

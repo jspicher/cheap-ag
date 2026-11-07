@@ -108,6 +108,18 @@ test("a picked model runs while another job holds OpenCode: it needs no reboot i
   expect(fake.recorded.sessions.map((s) => s.model?.id)).toContain("glm-5.3");
 });
 
+test("a picked model the running server has not loaded, while another job holds it: the refusal says so", async () => {
+  // on OpenRouter each model is declared with its routing options, so an unloaded one changes OpenCode's config
+  const { server, fake, delegate } = await scenario({ logins: { openrouter: "k" } });
+  fake.script({ wait: 2_000 }, EDIT, FINISH);
+  const first = await callText(server.client, "delegate", { plan: "plan.md", steps: "1", wait: false });
+  expect(first).toMatch(/^RUNNING /);
+  const text = await delegate("openrouter/minimax/minimax-m3"); // not in the default route
+  expect(text).toMatch(/^FAIL reason: model openrouter\/minimax\/minimax-m3 is not loaded in the running OpenCode server, and loading it needs a restart while jobs are running; wait for them to finish, or pick a model from the configured route or an alias for one \(loaded: openrouter\/\S+/);
+  expect(text).not.toContain("consent or cheapag.json models");
+  expect(fake.recorded.sessions.map((s) => s.model?.id)).not.toContain("minimax/minimax-m3");
+});
+
 test("config: aliases map short names to provider/model names", () => {
   const repo = tempRepo();
   onTestFinished(repo.cleanup);

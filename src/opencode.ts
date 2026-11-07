@@ -208,15 +208,28 @@ export async function runningOpencode(): Promise<Opencode | undefined> {
   }
 }
 
-export function ensureOpencode(provider: Provider, projectDir = process.cwd(), route?: Route): Promise<Opencode> {
-  const config = opencodeConfig(provider, route ?? fullRoute(provider.provider));
+/** The models the running server was booted with, by provider/model name. */
+let bootedModels: string[] = [];
+
+/** `picked`: the call's per-call model (provider/model), when it gave one; only used to explain a refused reboot. */
+export function ensureOpencode(provider: Provider, projectDir = process.cwd(), route?: Route, picked?: string): Promise<Opencode> {
+  const full = route ?? fullRoute(provider.provider);
+  const config = opencodeConfig(provider, full);
   if (started && route && booted !== config) {
     // a reboot would kill every live session: refuse it while any job or research call holds the server
     // shortcut: one server per config would let both run; worth it only if config changes mid-session become common
-    if (holds > 0) return Promise.reject(new Error("the model configuration changed (consent or cheapag.json models) while jobs are running; retry once they finish"));
+    if (holds > 0) {
+      const reason = picked && !bootedModels.includes(picked)
+        ? `model ${picked} is not loaded in the running OpenCode server, and loading it needs a restart while jobs are running; wait for them to finish, or pick a model from the configured route or an alias for one (loaded: ${bootedModels.join(", ")})`
+        : "the model configuration changed (consent or cheapag.json models) while jobs are running; retry once they finish";
+      return Promise.reject(new Error(reason));
+    }
     stopOpencode();
   }
-  if (!started) booted = config;
+  if (!started) {
+    booted = config;
+    bootedModels = routeModels(full).map(modelName);
+  }
   started ??= boot(projectDir, config).catch((err) => {
     stopOpencode();
     started = undefined;
