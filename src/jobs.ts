@@ -7,7 +7,7 @@ import { needsOf, overlap, parsePlan, PLAN_FORMAT, selectGroups, type Group, typ
 import { failBlock, renderBatch, renderJob, type BatchRecord, type JobRecord } from "./report.js";
 import { loadConfig, type Config } from "./config.js";
 import { projectScripts, workerRuleset } from "./permissions.js";
-import { chooseModel, consentGate } from "./consent.js";
+import { chooseModel, consentGate, opencodeRoute } from "./consent.js";
 import { chain, DIFFICULTIES, escalationSkip, modelName, recordSpend, runRouted, tierModel, usedBalance, type Difficulty, type Route } from "./routing.js";
 import { checkAllows, envFailure, errorTail, runVerify, sameFailure, verifyCommands, type VerifyRun } from "./verify.js";
 import { finishReport, openSession, releaseDirectory, type FinishReport, type Question, type RunResult, type Session } from "./worker.js";
@@ -141,7 +141,7 @@ export async function delegate(req: DelegateRequest, ctx: WorkerContext): Promis
   if (busy) return failBlock(`${busy} in the working tree; finish or abort it, then delegate again`);
 
   // one boot with one route for every group: a config change would restart OpenCode under the batch's running jobs
-  const opencode = await ctx.opencode(route);
+  const opencode = await ctx.opencode(opencodeRoute(gate.route, route));
   const release = holdOpencode();
   const shared = { root, input, plan, config, route, opencode, provider: ctx.provider, progress: ctx.progress };
   // wait=false: every group is RUNNING the moment it is created

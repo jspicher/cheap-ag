@@ -140,6 +140,15 @@ export function chooseModel(root: string, provider: Provider["provider"], route:
   return { route: { implement: m, fallbacks: [], escalation, research: m, researchFallbacks: [] } };
 }
 
+/**
+ * The route OpenCode is booted with for a call: the consented route, plus the picked model when the call has one. OpenCode
+ * then keeps one configuration (its small_model stays the consented implement model), so a picked model never needs a
+ * reboot, which is refused while other jobs hold the server. The job itself still runs only on `job`'s models.
+ */
+export function opencodeRoute(consented: Route, job: Route): Route {
+  return job === consented ? job : { ...consented, fallbacks: [...consented.fallbacks, job.implement] };
+}
+
 /** The config's `aliases`; a damaged config counts as none here, the job's own config load reports it. */
 function configuredAliases(root: string): Record<string, string> {
   try {
