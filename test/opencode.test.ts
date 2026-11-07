@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { expect, onTestFinished, test, vi } from "vitest";
+import { debugLog, serveArgs } from "../src/opencode.js";
 import { isAlive, killProcessGroup } from "../src/platform.js";
 import { PRESETS } from "../src/routing.js";
 import { callText, slow, startServer } from "./harness.js";
@@ -221,6 +222,39 @@ test("boots the bundled OpenCode lazily on localhost, restarts it after a crash,
     await vi.waitFor(() => expect(gone(opencodePid)).toBe(true), { timeout: slow(5000) });
   }
 }, slow(30_000));
+
+test("CHEAPAG_DEBUG=1 starts opencode serve with its debug logging; unset (or anything else) leaves the arguments as they were", () => {
+  const plain = ["serve", "--hostname", "127.0.0.1", "--port", "0"];
+  expect(serveArgs({})).toEqual(plain);
+  expect(serveArgs({ CHEAPAG_DEBUG: "0" })).toEqual(plain);
+  expect(serveArgs({ CHEAPAG_DEBUG: "1" })).toEqual([...plain, "--print-logs", "--log-level", "DEBUG"]);
+});
+
+test("the debug log appends whole redacted lines to server.log, a key split across chunks included; off writes nothing", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "cheapag-debuglog-"));
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
+  expect(debugLog(dir, {})).toBeUndefined();
+  expect(readdirSync(dir)).toEqual([]);
+  const log = debugLog(dir, { CHEAPAG_DEBUG: "1" })!;
+  log("INFO service=server listening\nDEBUG auth key=sk-cheapagSECRET01");
+  log("23456789abcdef ok\nDEBUG tail");
+  log();
+  await vi.waitFor(() => expect(readFileSync(join(dir, "server.log"), "utf8")).toMatch(/DEBUG tail$/));
+  const text = readFileSync(join(dir, "server.log"), "utf8");
+  expect(text).toMatch(/^--- cheapag: opencode serve started \S+ ---\nINFO service=server listening\nDEBUG auth key=\[redacted\] ok\nDEBUG tail$/);
+  expect(text).not.toContain("SECRET");
+});
+
+test("with CHEAPAG_DEBUG=1 the bundled OpenCode's own logs land in .cheapag/opencode/server.log, with no key in them", async () => {
+  const key = "sk-cheapagSECRET0123456789abcdef";
+  const server = await startServer({ env: { CHEAPAG_DEBUG: "1" }, logins: { "opencode-go": key } });
+  onTestFinished(server.close);
+  expect(await callText(server.client, "ping")).toMatch(/^OK cheapag /);
+  const file = join(server.home, ".cheapag", "opencode", "server.log");
+  // OpenCode's own log lines (`timestamp=… level=INFO …`), which it prints only with --print-logs
+  await vi.waitFor(() => expect(readFileSync(file, "utf8")).toMatch(/^timestamp=\S+ level=[A-Z]+ /m), { timeout: slow(5000) });
+  expect(readFileSync(file, "utf8")).not.toContain(key);
+}, slow(60_000));
 
 test("the server's normal shutdown stops OpenCode (stdin closed, no signal)", async () => {
   const server = await startServer({ logins: { "opencode-go": "k" }, env: { CHEAPAG_DEBUG_SHUTDOWN: "1" } });

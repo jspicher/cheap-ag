@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { createRequire } from "node:module";
 import { dirname, join, resolve, sep } from "node:path";
 import { loadConfig, userConfigFile } from "./config.js";
+import { baseVersion } from "./version.js";
 import { projectRoot } from "./workspace.js";
 
 const USAGE = "usage: cheapag hook [on | off]";
@@ -131,7 +132,8 @@ const colour = (text: string) => (process.env.CLAUDE_CODE_ENTRYPOINT === "claude
 async function newerVersion(): Promise<string | undefined> {
   if (process.env.CHEAPAG_NO_UPDATE_CHECK === "1") return;
   const latest = await latestVersion();
-  if (!latest || !majorOrMinorNewer(latest, INSTALLED)) return;
+  // on the published base: a fork build (1.3.2-js.1) is as current as its base, and older than nothing it is built on
+  if (!latest || !majorOrMinorNewer(latest, baseVersion(INSTALLED))) return;
   return latest;
 }
 

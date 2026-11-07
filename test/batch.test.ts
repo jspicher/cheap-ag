@@ -487,6 +487,23 @@ test("land apply of the last unlanded group runs the check; its failure gets a f
   expect(await s.call("jobs", { action: "wait", job: batch })).toBe(lines.slice(2).join("\n"));
 }, slow(30_000));
 
+test.each([
+  { model: "opencode-go/glm-5.3", runs: "glm-5.3" },
+  { model: undefined, runs: "deepseek-v4.1-flash" }, // no picked model: the default route, as before
+])("a fix job started by land apply runs on the batch's picked model ($model)", async ({ model, runs }) => {
+  const s = await scenario([{ id: "1", files: "a.txt" }, { id: "2", files: "b.txt" }], { "1": writes("a.txt"), "2": failsAfter("b.txt") }, INTEGRATION);
+  s.fake.scriptFor(FIX, ...writes("fixed.txt"));
+  const text = await s.call("delegate", { plan: ".plan/p.md", steps: "1,2", ...(model && { model }) });
+  const batch = batchOf(text);
+  const two = jobsIn(text).find((j) => j.step === "2")!.job;
+  expect(batchRecord(s.repo.dir, batch).model).toBe(model);
+
+  const landed = await s.call("land", { job: two, action: "apply" });
+  expect(landed.split("\n")[3]).toMatch(/^OK j\w{4} step=1,2 /);
+  expect(s.fake.recorded.sessions).toHaveLength(3);
+  expect(s.fake.recorded.sessions[2].model).toEqual({ providerID: "opencode-go", id: runs });
+}, slow(30_000));
+
 test("a discarded group's steps are not in the fix job: it fixes only what landed", async () => {
   const s = await scenario(
     [{ id: "1", files: "a.txt" }, { id: "2", files: "b.txt" }, { id: "3", files: "c.txt" }],
