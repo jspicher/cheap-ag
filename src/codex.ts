@@ -90,9 +90,25 @@ const COMMON = [
   "-c", 'approval_policy="never"',
 ];
 
+/** Codex's reasoning efforts, weakest first. */
+const EFFORTS = ["minimal", "low", "medium", "high", "xhigh"];
+const ESCALATED_EFFORT = "high";
+
+/**
+ * A Codex job's escalation (docs/codex-worker.md): the same model, resumed in the same thread at high reasoning effort.
+ * It keeps the model's name, so records and `esc:` lines read as for OpenCode; the effort rides in `options`.
+ */
+export const codexEscalation = (m: WorkerModel): WorkerModel => ({ ...m, options: { ...m.options, effort: ESCALATED_EFFORT } });
+
+/** At least `floor`: an escalation never lowers an effort the user already set higher (xhigh stays xhigh). */
+const atLeast = (effort: string | undefined, floor: string | undefined) =>
+  !floor ? effort : effort && EFFORTS.indexOf(effort) > EFFORTS.indexOf(floor) ? effort : floor;
+
 function modelArgs(m: WorkerModel) {
-  if (m.id !== "default") return ["-m", m.id];
-  const { model, effort } = userDefaults();
+  const floor = (m.options as { effort?: string } | undefined)?.effort;
+  const user = m.id === "default" ? userDefaults() : {};
+  const effort = atLeast(user.effort, floor);
+  const model = m.id === "default" ? user.model : m.id;
   return [...(model ? ["-m", model] : []), ...(effort ? ["-c", `model_reasoning_effort="${effort}"`] : [])];
 }
 

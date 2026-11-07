@@ -18,7 +18,7 @@ const REPORT = { summary: "added hello", risks: ["none known"], review: ["src/he
  * A repo, a fake Codex scripted with one action list per run, and a server whose OpenCode is a fake that must stay
  * untouched. `codex`: give the Codex opt-in. `config`: the repo's cheapag.json.
  */
-async function scenario(runs: Action[][], opts: { codex?: boolean; allow?: string[]; config?: object; bin?: string } = {}) {
+async function scenario(runs: Action[][], opts: { codex?: boolean; allow?: string[]; config?: object; bin?: string; effort?: string; logins?: Record<string, string> } = {}) {
   const repo = tempRepo();
   onTestFinished(repo.cleanup);
   if (opts.config) {
@@ -30,11 +30,11 @@ async function scenario(runs: Action[][], opts: { codex?: boolean; allow?: strin
   onTestFinished(() => removeDir(state));
   writeFileSync(join(state, "script.json"), JSON.stringify(runs));
   // the user's Codex config, which codex/default and the Windows sandbox read (never the developer's own)
-  writeFileSync(join(state, "config.toml"), 'model = "gpt-user"\nmodel_reasoning_effort = "high"\n\n[mcp_servers.x]\ncommand = "x"\n\n[windows]\nsandbox = "elevated"\n');
+  writeFileSync(join(state, "config.toml"), `model = "gpt-user"\nmodel_reasoning_effort = "${opts.effort ?? "high"}"\n\n[mcp_servers.x]\ncommand = "x"\n\n[windows]\nsandbox = "elevated"\n`);
   const opencode = await startFakeOpencode();
   onTestFinished(opencode.close);
   const env = { CHEAPAG_OPENCODE_URL: opencode.url, CHEAPAG_CODEX_BIN: opts.bin ?? FAKE, CHEAPAG_FAKE_CODEX: state, CODEX_HOME: state };
-  const server = await startServer({ cwd: repo.dir, env, logins: { "opencode-go": "go-key" }, ...(opts.allow && { allow: opts.allow }) });
+  const server = await startServer({ cwd: repo.dir, env, logins: opts.logins ?? { "opencode-go": "go-key" }, ...(opts.allow && { allow: opts.allow }) });
   onTestFinished(server.close);
   const cliEnv = { ...homeEnv(server.home), ...env };
   if (opts.codex) allowRepo(repo.dir, cliEnv, ["--codex"]);
@@ -63,8 +63,12 @@ test("a codex/ model runs codex exec in the worktree, lands OK, and never boots 
   const job = text.match(/^OK (j[0-9a-z]{4})/)![1];
   const record = JSON.parse(readFileSync(join(repo.dir, ".cheapag", "jobs", job, "result.json"), "utf8"));
   expect(record.models.requested).toBe("codex/gpt-test");
+  // the recipient is OpenAI through Codex, not the OpenCode provider this server is logged in to
+  expect(record.provider).toBe("codex");
   expect(record.sessionID).toBe("thread-1");
   expect(record.usage).toMatchObject({ turns: 2, costUsd: 0, inputTokens: 600, cacheRead: 400 });
+  expect(record.models.escalated).toBe(false);
+  expect(runs()).toHaveLength(1);
 });
 
 test("codex/default runs the user's configured model and effort; on Windows it keeps their sandbox mode", async () => {
@@ -119,6 +123,61 @@ test("a failing done-when check resumes the same Codex thread with the error, th
   expect(fix.cwd).toBe(first.argv[first.argv.indexOf("-C") + 1]);
   expect(fix.prompt).toMatch(/^Verification failed/);
   expect(fix.prompt).toContain("no finish tool");
+  // passed on the self-fix: no escalation, no effort raised
+  expect(s.runs()).toHaveLength(2);
+  expect(text).not.toContain("esc");
+  expect(fix.argv.join(" ")).not.toContain("model_reasoning_effort");
+});
+
+/** Fails `check` (v.txt must hold 2) on the first run and both self-fixes; the fourth run, the escalation, passes. */
+const ESCALATE = "node -e \"process.exit(require('fs').readFileSync('v.txt','utf8').trim()==='2'?0:1)\"";
+const escalating = (): Action[][] => [
+  [{ write: "v.txt", content: "1\n" }, { report: REPORT }],
+  [{ write: "v.txt", content: "1\n" }, { report: { ...REPORT, summary: "fix one" } }],
+  [{ write: "v.txt", content: "1\n" }, { report: { ...REPORT, summary: "fix two" } }],
+  [{ write: "v.txt", content: "2\n" }, { report: { ...REPORT, summary: "escalated fix" } }],
+];
+
+test("a Codex job still failing after its self-fixes escalates once: the same thread resumed at high effort, then OK", async () => {
+  const s = await scenario(escalating(), { codex: true });
+  const text = await s.delegate({ task: "Write 2 to v.txt", done_when: `\`${ESCALATE}\`` });
+  expect(text).toMatch(/^OK /);
+  expect(text).toContain("esc=1");
+  expect(readFileSync(join(s.repo.dir, "v.txt"), "utf8")).toBe("2\n");
+  const runs = s.runs();
+  expect(runs).toHaveLength(4);
+  for (const r of runs.slice(0, 3)) expect(r.argv.join(" ")).not.toContain("model_reasoning_effort");
+  const esc = runs[3];
+  expect(esc.argv.slice(0, 3)).toEqual(["exec", "resume", "thread-1"]);
+  // same model, higher effort
+  expect(esc.argv).toEqual(expect.arrayContaining(["-m", "gpt-test", "-c", 'model_reasoning_effort="high"']));
+  const job = text.match(/^OK (j[0-9a-z]{4})/)![1];
+  const record = JSON.parse(readFileSync(join(s.repo.dir, ".cheapag", "jobs", job, "result.json"), "utf8"));
+  expect(record.models).toMatchObject({ requested: "codex/gpt-test", final: "codex/gpt-test", escalated: true });
+  expect(record.tried.at(-1)).toBe("esc: escalated fix → passed");
+});
+
+test("escalating codex/default never lowers the user's effort: xhigh stays xhigh", async () => {
+  const s = await scenario(escalating(), { codex: true, effort: "xhigh" });
+  expect(await s.delegate({ task: "Write 2 to v.txt", model: "codex/default", done_when: `\`${ESCALATE}\`` })).toMatch(/^OK /);
+  const esc = s.runs()[3];
+  expect(esc.argv).toEqual(expect.arrayContaining(["-m", "gpt-user", "-c", 'model_reasoning_effort="xhigh"']));
+  expect(esc.argv.join(" ")).not.toContain('model_reasoning_effort="high"');
+});
+
+test("with no OpenCode login, codex/ jobs still run; other delegates get NO_PROVIDER; ping says provider=none", async () => {
+  const s = await scenario([[{ write: "a.txt", content: "a\n" }, { report: REPORT }]], { codex: true, logins: {} });
+  const text = await s.delegate({ task: "Add a.txt" });
+  expect(text).toMatch(/^OK /);
+  const job = text.match(/^OK (j[0-9a-z]{4})/)![1];
+  expect(JSON.parse(readFileSync(join(s.repo.dir, ".cheapag", "jobs", job, "result.json"), "utf8")).provider).toBe("codex");
+  expect(await callText(s.server.client, "jobs", { action: "list" })).toContain(job);
+  expect(await callText(s.server.client, "delegate", { task: "Add b.txt" })).toBe("FAIL reason: no worker provider; run npx cheap-agent login");
+  expect(await callText(s.server.client, "research", { question: "where?" })).toBe("FAIL reason: no worker provider; run npx cheap-agent login");
+  const ping = await callText(s.server.client, "ping");
+  expect(ping).toMatch(/^OK cheapag \S+ provider=none codex=allowed/);
+  expect(ping).not.toContain("opencode=");
+  expect(s.opencode.recorded.requests).toEqual([]);
 });
 
 test("the turn cap kills the codex process and the job stops", async () => {

@@ -9,8 +9,14 @@ A second worker engine next to OpenCode: the OpenAI Codex CLI (`codex exec`), pi
 - A config alias may point at a codex name: `"aliases": { "cx": "codex/default" }`.
 - `delegate` resolves the name before anything else. A codex name skips the OpenCode consent gate, `chooseModel`,
   `ensureOpencode` and `holdOpencode`: nothing goes to the OpenCode provider and OpenCode is never booted.
-- The job's route is the codex model alone: no fallbacks, no tier models, no escalation (`tried:` says
-  `esc: skipped, Codex jobs have no escalation model`). Self-fixes still run (same thread, see below).
+- The job's route is the codex model alone: no fallbacks, no tier models. Self-fixes still run (same thread, see below).
+- Escalation: when a check still fails after the two self-fixes (or after a turn-cap stop), the job resumes the same
+  thread once more with `-c model_reasoning_effort="high"`, on the same model. The route's escalation model is that
+  model with `options.effort: "high"` (`codexEscalation` in `src/codex.ts`), so the job layer runs it like OpenCode's:
+  `esc=1` in the headline, `esc: <summary> → passed|same failure|…` under `tried:`, `models.escalated: true`, and
+  `models.final` is the same `codex/<model>`. The effort is a floor, never a downgrade: for `codex/default` whose
+  config.toml already says `high` or `xhigh`, the escalation resumes at that effort (so it is one more attempt in the
+  same thread at the same effort); an explicit `codex/<model>` runs at Codex's built-in default effort until it escalates.
 - `research` with a codex name FAILs with a clear reason: v1 is delegate-only (see Out of scope).
 
 ## Consent
@@ -25,6 +31,20 @@ Code goes to OpenAI, a different recipient from the OpenCode provider, so it nee
 - A codex model without the entry gets a CONSENT block: code from this repo → OpenAI via the Codex CLI (your ChatGPT
   plan or API key); retention: per your OpenAI account's data controls; approve: `npx cheap-agent allow --codex`.
 - Revoking: delete the `engines` key (or `.cheapag/consent.json`). No `--no-codex` flag in v1.
+
+## Without an OpenCode login
+
+Codex needs no OpenCode provider, so the server runs without one:
+
+- `delegate` with a `codex/` model runs as usual (given `allow --codex`); any other `delegate`, and every `research`,
+  answers `FAIL reason: no worker provider; run npx cheap-agent login`.
+- `ping` answers `OK cheapag <version> provider=none[ codex=allowed][ root=…]; run npx cheap-agent login for OpenCode
+  workers` and boots no OpenCode.
+- `jobs`, `reply` and `land` need no login: they act on jobs already started. Landing a batch's last group whose
+  integration check fails starts its fix job on the OpenCode route, which then fails with `no worker provider for a fix
+  job`.
+- A Codex job's record says `provider: "codex"` (also when an OpenCode provider is logged in): its code went to OpenAI.
+- `cheapag status` already prints `provider=none (run npx cheap-agent login)` and the `codex:` line.
 
 ## Running a job: Session on `codex exec`
 
@@ -110,9 +130,7 @@ more `resume` (bounded by its own 30 s timeout, as for OpenCode).
 ## Out of scope for v1
 
 - `research` on Codex (would need a read-only sandbox run and the research block format); FAILs with a reason.
-- Escalation for Codex jobs (a second model or `model_reasoning_effort=high` on resume is the obvious next step).
-- The server still needs an OpenCode provider login to take tool calls (`detectProvider`), and job records still
-  name that provider in `provider=`; the model fields say `codex/…`.
+- Escalation to a second Codex model (escalation stays on the job's model, at a higher effort).
 - A Codex batch's integration fix job runs on Codex when `delegate` starts it, but on the OpenCode route when `land`
   starts it (landing a batch's last group), since `land` takes no `model`.
 - `cheapag status`/`ping` only show whether Codex is allowed here; they do not run `codex --version`.

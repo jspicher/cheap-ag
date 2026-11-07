@@ -1,14 +1,14 @@
 import { randomBytes } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
-import { redact, type Provider } from "./credentials.js";
+import { LOGIN_COMMAND, NO_PROVIDER, redact, type Provider } from "./credentials.js";
 import { holdOpencode, type Opencode } from "./opencode.js";
 import { needsOf, overlap, parsePlan, PLAN_FORMAT, selectGroups, type Group, type Plan, type PlanStep } from "./plan.js";
 import { failBlock, renderBatch, renderJob, type BatchRecord, type JobRecord } from "./report.js";
 import { loadConfig, type Config } from "./config.js";
 import { projectScripts, workerRuleset } from "./permissions.js";
 import { chooseModel, codexGate, codexModel, consentGate, opencodeRoute } from "./consent.js";
-import { openWorker, releaseWorker } from "./engine.js";
+import { isCodex, openWorker, releaseWorker } from "./engine.js";
 import { chain, DIFFICULTIES, escalationSkip, modelName, recordSpend, runRouted, tierModel, usedBalance, type Difficulty, type Route } from "./routing.js";
 import { checkAllows, envFailure, errorTail, runVerify, sameFailure, verifyCommands, type VerifyRun } from "./verify.js";
 import { finishReport, releaseDirectory, type FinishReport, type Question, type RunResult, type Session } from "./worker.js";
@@ -92,17 +92,22 @@ function inlinePlan(root: string, req: DelegateRequest): { plan: string } | { fa
   return { plan: rel };
 }
 
-/** What a tool call that may start workers gets from the server. */
-export type WorkerContext = { provider: Provider; opencode: (route: Route, picked?: string) => Promise<Opencode>; progress: Progress };
+/**
+ * What a tool call that may start workers gets from the server. `provider`: the OpenCode provider logged in, if any;
+ * without one only Codex jobs run (docs/codex-worker.md).
+ */
+export type WorkerContext = { provider?: Provider; opencode: (route: Route, picked?: string) => Promise<Opencode>; progress: Progress };
 
 export async function delegate(req: DelegateRequest, ctx: WorkerContext): Promise<string> {
   const root = callRoot(req.root);
   // first: an unapproved repo gets CONSENT before any job, worktree, OpenCode boot or provider call
   // a Codex model has its own consent and never boots OpenCode (docs/codex-worker.md)
   const codex = codexModel(root, req.model);
-  const gate = codex ? codexGate(root, codex) : consentGate(root, ctx.provider.provider);
+  const { provider } = ctx;
+  if (!codex && !provider) return NO_PROVIDER;
+  const gate = codex ? codexGate(root, codex) : consentGate(root, provider!.provider);
   if ("block" in gate) return gate.block;
-  const chosen = codex ? gate : chooseModel(root, ctx.provider.provider, gate.route, req.model);
+  const chosen = codex ? gate : chooseModel(root, provider!.provider, gate.route, req.model);
   if ("block" in chosen) return chosen.block;
   const { route } = chosen;
   let input: DelegateInput;
@@ -164,7 +169,7 @@ export async function delegate(req: DelegateRequest, ctx: WorkerContext): Promis
  * `opencode`: undefined for a Codex job, which never boots it. `picked`: the call's per-call model (provider/model), when
  * it gave one; a batch keeps it for a later fix job.
  */
-type Shared = { root: string; input: DelegateInput; plan: Plan; config: Config; route: Route; opencode?: Opencode; provider: Provider; progress: Progress; picked?: string };
+type Shared = { root: string; input: DelegateInput; plan: Plan; config: Config; route: Route; opencode?: Opencode; provider?: Provider; progress: Progress; picked?: string };
 
 /** One group, one job: what `runGroup` needs beyond what the whole delegation shares. */
 type GroupRun = Shared & {
@@ -205,6 +210,8 @@ function runGroup(g: GroupRun) {
   const elapsed = () => Math.round((Date.now() - startedAt.getTime()) / 1000);
 
   const escalation = route.escalation;
+  // a Codex job's recipient is OpenAI through the Codex CLI, whatever OpenCode provider is logged in (or none)
+  const provider = isCodex(model) ? "codex" : g.provider!.provider;
   // the job's model, then its allowed fallbacks: a provider limit moves the session on to the next one
   const models = chain(model, route.fallbacks.filter((m) => modelName(m) !== modelName(model)));
   let billing: JobRecord["billing"];
@@ -357,7 +364,7 @@ function runGroup(g: GroupRun) {
     const env = failing ? envFailure(failing.run) : undefined;
     const record = {
       format: "cheapag/1" as const, job, batch: g.batch, kind: g.fix ? "fix" : "implement", status, landed,
-      plan: input.plan, steps: stepIds, provider: g.provider.provider,
+      plan: input.plan, steps: stepIds, provider,
       // the server process running the job: a restart finds RUNNING/BLOCKED records whose pid is gone
       pid: process.pid,
       models: {
@@ -505,7 +512,6 @@ function runGroup(g: GroupRun) {
         },
       });
       finalize("RUNNING"); // now with the worktree, so a restart can point at it
-      const provider = g.provider.provider;
       // a provider limit is not a cap: the worker aborts the session itself and the job falls back, or stops as BUDGET
       const routed = async (text: string, on?: typeof escalation, interrupt?: AbortSignal) => {
         const r = await runRouted(session!, text, models, provider, on, interrupt);
@@ -627,7 +633,7 @@ function runGroup(g: GroupRun) {
       // Go windows are per account: the user-wide ledger decides later escalations and shows balance use
       try {
         recordSpend(session.totals().spend);
-        if (g.provider.provider === "opencode-go" && usedBalance(session.totals().spend)) billing = "zen";
+        if (provider === "opencode-go" && usedBalance(session.totals().spend)) billing = "zen";
       } catch {
         // the ledger only steers later escalations: a write error (full disk, permissions) must not change this job's result
       }
@@ -1124,6 +1130,8 @@ async function integrateLater(root: string, config: Config, batch: string, ctx: 
   let release: (() => void) | undefined;
   let fix: ReturnType<typeof runGroup> | undefined;
   const fixer = async (): Promise<Shared> => {
+    // a fix job started here runs on the OpenCode route (docs/codex-worker.md), which needs a provider login
+    if (!ctx.provider) throw new Error(`no worker provider for a fix job; run ${LOGIN_COMMAND}`);
     const gate = consentGate(root, ctx.provider.provider);
     if ("block" in gate) throw new Error(`no consent for a fix job: ${gate.block.split("\n")[0]}`);
     // the batch's picked model, if it had one: the fix job runs on it, as the batch's groups did
