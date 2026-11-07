@@ -295,7 +295,9 @@ export function leftoverMarkers(worktree: Worktree) {
  */
 export function jobWorktree(root: string, job: string, base: string, linkDirs: string[]): Worktree | undefined {
   const path = join(root, ".cheapag", "worktrees", job);
-  if (!lstatOf(path)?.isDirectory()) return undefined;
+  // a worktree has its `.git` file: a folder without one (left empty when Windows refused to delete it) is not one, and
+  // git run in it would act on the repository above instead
+  if (!lstatOf(path)?.isDirectory() || !lstatOf(join(path, ".git"))) return undefined;
   const links = linkDirs.map((d) => join(path, d)).filter((l) => lstatOf(l)?.isSymbolicLink());
   return { path, head: "", stash: null, base, links, linked: links.map((l) => normalisePath(relative(path, l))) };
 }
