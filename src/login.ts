@@ -10,6 +10,7 @@ import { ensureOpencode, OPENCODE_DB, opencodeBinary, stopOpencode } from "./ope
 import { runCli } from "./platform.js";
 import { installPlugin, stableNode } from "./install.js";
 import { fullRoute, modelName, presetOf, PRESET_NAMES, PRESETS, type ModelsConfig } from "./routing.js";
+import { baseVersion } from "./version.js";
 import { runSession } from "./worker.js";
 
 /**
@@ -406,7 +407,7 @@ function finish(out: (line?: string) => void, plugin: boolean) {
 /** How Claude Code should start this installed package: npx when run from npx's cache, else this exact file. */
 function serverCommand() {
   const entry = realpathSync(process.argv[1]);
-  return entry.split(sep).includes("_npx") ? ["npx", "-y", `cheap-agent@${version}`] : [stableNode(), entry];
+  return entry.split(sep).includes("_npx") ? ["npx", "-y", `cheap-agent@${baseVersion(version)}`] : [stableNode(), entry];
 }
 
 // double quotes on Windows: cmd and PowerShell don't treat single quotes as quoting

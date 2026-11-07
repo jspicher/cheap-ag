@@ -5,6 +5,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, wr
 import { dirname, join } from "node:path";
 import { expect, onTestFinished, test } from "vitest";
 import { installPaths, writePlugin } from "../src/install.js";
+import { baseVersion, version } from "../src/version.js";
 import { normalisePath } from "../src/platform.js";
 import { PRESETS } from "../src/routing.js";
 import { startFakeOpencode, type Action } from "./fake-opencode.js";
@@ -406,6 +407,10 @@ test("writePlugin on win32 emits double-quoted, forward-slash commands with no s
   expect(codex.command).toBe("node");
   expect(codex.args).toEqual([normalisePath(launcher), "codex"]); // this install, not the pinned npx
   expect(codex.omit_tools_from).toEqual(["code_mode", "deferred"]);
+  // the launcher's npx fallback names the published base version: a fork build's own (x.y.z-js.N) is not on npm
+  const script = readFileSync(launcher, "utf8");
+  expect(script).toContain(`["-y", "cheap-agent@${baseVersion(version)}", ...process.argv.slice(2)]`);
+  expect(script).not.toContain(`cheap-agent@${version}"`);
 });
 
 test("the launcher gates the guard hook itself: nothing without the repo flag, a deny decision with it", () => {

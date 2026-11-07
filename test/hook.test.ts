@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { expect, onTestFinished, test } from "vitest";
 import { SESSION_CONTEXT } from "../src/hook.js";
 import { gitBash } from "../src/platform.js";
+import { baseVersion } from "../src/version.js";
 import { hermeticHome, serverEntry, slow, tempRepo } from "./harness.js";
 
 /**
@@ -12,9 +13,10 @@ import { hermeticHome, serverEntry, slow, tempRepo } from "./harness.js";
  */
 const repoDir = join(import.meta.dirname, "..");
 const { version } = JSON.parse(readFileSync(join(repoDir, "package.json"), "utf8"));
+const npm = baseVersion(version); // the published version the npx pins name
 const hooks = JSON.parse(readFileSync(join(repoDir, "plugin", "hooks", "hooks.json"), "utf8"));
-const command = (hooks.hooks.PreToolUse[0].hooks[0].command as string).replace(`npx -y cheap-agent@${version}`, `"${process.execPath}" "${serverEntry}"`);
-const resultCommand = (hooks.hooks.PostToolUse[0].hooks[0].command as string).replace(`npx -y cheap-agent@${version}`, `"${process.execPath}" "${serverEntry}"`);
+const command = (hooks.hooks.PreToolUse[0].hooks[0].command as string).replace(`npx -y cheap-agent@${npm}`, `"${process.execPath}" "${serverEntry}"`);
+const resultCommand = (hooks.hooks.PostToolUse[0].hooks[0].command as string).replace(`npx -y cheap-agent@${npm}`, `"${process.execPath}" "${serverEntry}"`);
 const lines = (n: number, tag = "x") => Array.from({ length: n }, (_, i) => `${tag}${i}`).join("\n") + "\n";
 /** A Codex apply_patch: sections are `*** Update File:`/`*** Add File:`/`*** Delete File:` with their hunks. */
 const applyPatch = (...sections: string[]) => ["*** Begin Patch", ...sections, "*** End Patch"].join("\n") + "\n";
@@ -194,7 +196,7 @@ test("context: neither Codex signal keeps the byte-identical Claude one-liner", 
 });
 
 test("context: a newer minor or major version adds a yellow systemMessage and tells Claude to prompt the update", () => {
-  const [major, minor] = version.split(".").map(Number);
+  const [major, minor] = npm.split(".").map(Number);
   for (const latest of [`${major}.${minor + 1}.0`, `${major + 1}.0.0`]) {
     const out = contextOut({ checked: Date.now(), latest }, { CLAUDE_CODE_ENTRYPOINT: "cli" });
     expect(out.systemMessage).toBe(`\x1b[33mCheap Agent ${latest} is available (you have ${version}). Update: npx cheap-agent@latest\x1b[39m`);
@@ -206,7 +208,7 @@ test("context: a newer minor or major version adds a yellow systemMessage and te
 });
 
 test("context: in the desktop app the systemMessage has no colour but Claude is still told about the update", () => {
-  const [major, minor] = version.split(".").map(Number);
+  const [major, minor] = npm.split(".").map(Number);
   const latest = `${major}.${minor + 1}.0`;
   const out = contextOut({ checked: Date.now(), latest }, { CLAUDE_CODE_ENTRYPOINT: "claude-desktop" });
   expect(out.systemMessage).not.toContain("\x1b[");
@@ -216,14 +218,21 @@ test("context: in the desktop app the systemMessage has no colour but Claude is 
 });
 
 test("context: a newer patch alone does not notify", () => {
-  const [major, minor, patch] = version.split(".").map(Number);
+  const [major, minor, patch] = npm.split(".").map(Number);
   const out = contextOut({ checked: Date.now(), latest: `${major}.${minor}.${patch + 1}` }, { CLAUDE_CODE_ENTRYPOINT: "cli" });
   expect(out.systemMessage).toBeUndefined();
   expect(out.hookSpecificOutput.additionalContext).toBe(SESSION_CONTEXT);
 });
 
+test("context: a fork build (x.y.z-js.N) is compared on its base, so the published base itself is no update", () => {
+  expect(version).toMatch(/^\d+\.\d+\.\d+-js\.\d+$/);
+  const out = contextOut({ checked: Date.now(), latest: npm }, { CLAUDE_CODE_ENTRYPOINT: "cli" });
+  expect(out.systemMessage).toBeUndefined();
+  expect(out.hookSpecificOutput.additionalContext).toBe(SESSION_CONTEXT);
+});
+
 test("context: CHEAPAG_NO_UPDATE_CHECK=1 skips the check even when the cache has a newer minor", () => {
-  const [major, minor] = version.split(".").map(Number);
+  const [major, minor] = npm.split(".").map(Number);
   const out = contextOut({ checked: Date.now(), latest: `${major}.${minor + 1}.0` }, { CHEAPAG_NO_UPDATE_CHECK: "1", CLAUDE_CODE_ENTRYPOINT: "cli" });
   expect(out.systemMessage).toBeUndefined();
   expect(out.hookSpecificOutput.additionalContext).toBe(SESSION_CONTEXT);
