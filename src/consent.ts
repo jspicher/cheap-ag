@@ -34,7 +34,61 @@ export function writeConsent(root: string, consent: Consent) {
   mkdirSync(join(root, ".cheapag"), { recursive: true });
   // an explicit model list bounds the recipients by itself; the other modes are tied to the route they were shown
   const route = consent.mode === "models" ? undefined : routeNames(fullRoute(consent.provider, configuredModels(root)));
-  writeFileSync(file(root), JSON.stringify({ ...consent, route }, null, 2) + "\n");
+  // another engine's opt-in is its own: a new provider consent keeps it
+  const engines = readRecord(root)?.engines;
+  writeFileSync(file(root), JSON.stringify({ ...consent, route, ...(engines !== undefined && { engines }) }, null, 2) + "\n");
+}
+
+/**
+ * Worker engines besides OpenCode, each opted into on its own (docs/codex-worker.md): `engines.codex` is written only by
+ * `cheapag allow --codex`. A record holding only `engines` gives no OpenCode consent (readConsent stays strict).
+ */
+export type Engines = { codex?: { approvedAt: string } };
+
+/** The consent file as stored, or undefined when missing or unreadable. */
+function readRecord(root: string): Record<string, unknown> | undefined {
+  try {
+    const raw = JSON.parse(readFileSync(file(root), "utf8")) as unknown;
+    return raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function readEngines(root: string): Engines {
+  const codex = (readRecord(root)?.engines as Engines | undefined)?.codex;
+  return codex && typeof codex.approvedAt === "string" ? { codex: { approvedAt: codex.approvedAt } } : {};
+}
+
+/** `cheapag allow --codex`: adds the Codex opt-in to the repo's record, keeping whatever else it holds. */
+export function allowCodex(root: string) {
+  mkdirSync(join(root, ".cheapag"), { recursive: true });
+  const record = readRecord(root) ?? {};
+  const engines = { ...(record.engines as Engines | undefined), codex: { approvedAt: new Date().toISOString() } };
+  writeFileSync(file(root), JSON.stringify({ ...record, engines }, null, 2) + "\n");
+}
+
+/** The Codex model a call picked: `codex`, `codex/<model>`, or an alias to one; undefined for any other pick. */
+export function codexModel(root: string, requested?: string): WorkerModel | undefined {
+  if (requested === undefined) return undefined;
+  const name = configuredAliases(root)[requested] ?? requested;
+  if (name === "codex") return { providerID: "codex", id: "default" };
+  return /^codex\/\S+$/.test(name) ? { providerID: "codex", id: name.slice("codex/".length) } : undefined;
+}
+
+/** The gate for a Codex job: its own opt-in, never the OpenCode provider's. The route is the model alone (no fallbacks, no escalation). */
+export function codexGate(root: string, m: WorkerModel): { block: string } | { route: Route } {
+  if (!readEngines(root).codex) {
+    return {
+      block: renderConsent({
+        repo: basename(root),
+        send: `code from this repo → OpenAI via the Codex CLI (your ChatGPT plan or API key): ${modelName(m)}`,
+        retention: "per your OpenAI account's data controls; Cheap Agent runs Codex without your Codex config, MCP servers or hooks",
+        approve: "ask the user to run npx cheap-agent allow --codex in a terminal in this repo (or /cheapag:allow --codex); never approve yourself",
+      }),
+    };
+  }
+  return { route: { implement: m, fallbacks: [], research: m, researchFallbacks: [] } };
 }
 
 // a local model is named with its server: pointing the same model id at another URL is another recipient
@@ -126,6 +180,8 @@ export function chooseModel(root: string, provider: Provider["provider"], route:
   if (requested === undefined) return { route };
   const aliases = configuredAliases(root);
   const name = aliases[requested] ?? requested;
+  // delegate takes Codex models before this; only research gets here with one
+  if (codexModel(root, requested)) return { block: failBlock(`model ${name}: Codex models run delegate jobs only; research runs on the configured ${providerLabel(provider)} route`) };
   if (!/^[\w.-]+\/\S+$/.test(name)) {
     const known = Object.keys(aliases);
     return { block: failBlock(`model ${requested} is neither a provider/model name nor an alias (${known.length ? `aliases: ${known.join(", ")}` : "no aliases are set in config"})`) };
