@@ -143,7 +143,8 @@ export async function delegate(req: DelegateRequest, ctx: WorkerContext): Promis
   // one boot with one route for every group: a config change would restart OpenCode under the batch's running jobs
   const opencode = await ctx.opencode(opencodeRoute(gate.route, route));
   const release = holdOpencode();
-  const shared = { root, input, plan, config, route, opencode, provider: ctx.provider, progress: ctx.progress };
+  const picked = req.model === undefined ? undefined : modelName(route.implement);
+  const shared = { root, input, plan, config, route, opencode, provider: ctx.provider, progress: ctx.progress, picked };
   // wait=false: every group is RUNNING the moment it is created
   if (groups.length === 1) {
     const one = runGroup({ ...shared, group: groups[0], batch: null });
@@ -155,7 +156,8 @@ export async function delegate(req: DelegateRequest, ctx: WorkerContext): Promis
   return input.wait === false ? run.render() : run.look(false, ctx.progress);
 }
 
-type Shared = { root: string; input: DelegateInput; plan: Plan; config: Config; route: Route; opencode: Opencode; provider: Provider; progress: Progress };
+/** `picked`: the call's per-call model (provider/model), when it gave one; a batch keeps it for a later fix job. */
+type Shared = { root: string; input: DelegateInput; plan: Plan; config: Config; route: Route; opencode: Opencode; provider: Provider; progress: Progress; picked?: string };
 
 /** One group, one job: what `runGroup` needs beyond what the whole delegation shares. */
 type GroupRun = Shared & {
@@ -689,7 +691,7 @@ function runBatch(groups: Group[], shared: Shared) {
     const landed = ended.filter((r) => r.landed).map((r) => r.job); // in landing order: groups land in step order
     const { plan, steps } = shared.input;
     const endedAt = ended.length === groups.length ? new Date() : null;
-    writeWhole(join(dir, `${batch}.json`), redact(JSON.stringify({ ...record(), plan, steps, landed, startedAt, endedAt }, null, 2) + "\n"));
+    writeWhole(join(dir, `${batch}.json`), redact(JSON.stringify({ ...record(), plan, steps, model: shared.picked, landed, startedAt, endedAt }, null, 2) + "\n"));
   };
 
   // worker slots: held while a worker runs (BLOCKED included: its worktree and session stay live, and a reply resumes it at
@@ -1094,7 +1096,7 @@ export async function landJobs(input: LandInput, ctx: WorkerContext): Promise<st
 /** A settled batch, still pending, with nothing left to land: runs its integration check and returns the batch block. */
 async function integrateLater(root: string, config: Config, batch: string, ctx: WorkerContext) {
   const file = join(root, ".cheapag", "batches", `${batch}.json`);
-  let record: BatchRecord & Integration & { plan: string; steps: string };
+  let record: BatchRecord & Integration & { plan: string; steps: string; model?: string };
   try {
     record = JSON.parse(readFileSync(file, "utf8"));
   } catch {
@@ -1117,10 +1119,13 @@ async function integrateLater(root: string, config: Config, batch: string, ctx: 
   const fixer = async (): Promise<Shared> => {
     const gate = consentGate(root, ctx.provider.provider);
     if ("block" in gate) throw new Error(`no consent for a fix job: ${gate.block.split("\n")[0]}`);
+    // the batch's picked model, if it had one: the fix job runs on it, as the batch's groups did
+    const chosen = chooseModel(root, ctx.provider.provider, gate.route, record.model);
+    if ("block" in chosen) throw new Error(`the batch's model for a fix job: ${chosen.block.split("\n")[0]}`);
     const plan = parsePlan(readFileSync(join(root, record.plan), "utf8"));
-    const opencode = await ctx.opencode(gate.route);
+    const opencode = await ctx.opencode(opencodeRoute(gate.route, chosen.route));
     release = holdOpencode();
-    return { root, input: { plan: record.plan, steps: record.steps }, plan, config, route: gate.route, opencode, provider: ctx.provider, progress: ctx.progress };
+    return { root, input: { plan: record.plan, steps: record.steps }, plan, config, route: chosen.route, opencode, provider: ctx.provider, progress: ctx.progress, picked: record.model };
   };
   try {
     await integrate(root, cmd, batch, record, jobRecords.map((r) => r!.landed), () => writeWhole(file, redact(JSON.stringify(record, null, 2) + "\n")), fixer, (run) => (fix = run));
