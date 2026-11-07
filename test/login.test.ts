@@ -402,6 +402,10 @@ test("writePlugin on win32 emits double-quoted, forward-slash commands with no s
   expect(allow).toContain(`allowed-tools: Bash(${ref} allow) Bash(${ref} allow *)`);
   expect(allow).toContain(`!\`${ref} allow $ARGUMENTS\``);
   expect(allow).not.toContain("npx -y");
+  const codex = JSON.parse(readFileSync(join(marketplace, "cheapag", "codex.mcp.json"), "utf8")).mcpServers.cheapag;
+  expect(codex.command).toBe("node");
+  expect(codex.args).toEqual([normalisePath(launcher), "codex"]); // this install, not the pinned npx
+  expect(codex.omit_tools_from).toEqual(["code_mode", "deferred"]);
 });
 
 test("the launcher gates the guard hook itself: nothing without the repo flag, a deny decision with it", () => {

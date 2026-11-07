@@ -8,7 +8,7 @@ import { normalisePath, runCli, which } from "./platform.js";
 /**
  * The Claude Code plugin (hooks and slash commands), installed by setup (ticket 31). It is generated from this package's
  * own plugin/ so it always matches the installed version, needs no public marketplace, and leaves out .mcp.json (setup
- * registers the server at user scope). Its hooks run on every tool call once a job has run, so they call a launcher that
+ * registers the server at user scope); Codex's codex.mcp.json starts this install through the launcher. Its hooks run on every tool call once a job has run, so they call a launcher that
  * starts this install with node (~0.1 s) instead of npx (~0.4 s), falling back to npx if this install is gone.
  */
 
@@ -65,6 +65,12 @@ export function writePlugin(entry: string, _node: string, platform: NodeJS.Platf
   const plugin = join(marketplace, "cheapag");
   cpSync(PLUGIN_SRC, plugin, { recursive: true });
   rmSync(join(plugin, ".mcp.json"), { force: true });
+  // Codex has no user-scope registration step, so its plugin starts the server itself: through the launcher, like the hooks
+  const codexMcp = join(plugin, "codex.mcp.json");
+  const mcp = JSON.parse(readFileSync(codexMcp, "utf8"));
+  mcp.mcpServers.cheapag.command = "node";
+  mcp.mcpServers.cheapag.args = [platform === "win32" ? normalisePath(launcher) : launcher, "codex"];
+  writeFileSync(codexMcp, JSON.stringify(mcp, null, 2) + "\n");
   const skills = readdirSync(join(plugin, "skills")).map((s) => join(plugin, "skills", s, "SKILL.md"));
   for (const f of skills) writeFileSync(f, readFileSync(f, "utf8").replaceAll(NPX, ref));
   const hooksFile = join(plugin, "hooks", "hooks.json");
