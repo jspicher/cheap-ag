@@ -156,10 +156,11 @@ export async function serve(host: "claude" | "codex" = "claude") {
         const at = dir === undefined ? "" : ` root=${dir}`;
         // only when this repo opted in: Codex is a second engine, picked per call (docs/codex-worker.md)
         const codex = codexHere(dir) ? " codex=allowed" : "";
-        const debug = debugLogPath ? ` debug_log=${debugLogPath}` : "";
         // no OpenCode login: Codex jobs still run where the repo allows them, so the server is up, without OpenCode
-        if (!provider) return safeText(`OK cheapag ${version} provider=none${codex}${at}${debug}; run ${LOGIN_COMMAND} for OpenCode workers`);
+        if (!provider) return safeText(`OK cheapag ${version} provider=none${codex}${at}; run ${LOGIN_COMMAND} for OpenCode workers`);
         const opencode = await ensureOpencode(provider, dir);
+        // read after the boot: the debug log is opened when OpenCode starts
+        const debug = debugLogPath ? ` debug_log=${debugLogPath}` : "";
         return safeText(`OK cheapag ${version} opencode=${opencode.version} provider=${provider.provider} via=${provider.via} preset=${presetHere(provider.provider, dir)}${codex}${at}${debug}`);
       } catch (err) {
         return safeText(`FAIL reason: ${(err as Error).message}`);
