@@ -57,6 +57,9 @@ codex exec resume <thread_id> --json --ignore-user-config --disable hooks … -c
 - `--ignore-user-config`: seen live, the user's config loads ~40 MCP servers (code could flow to Tavily, Exa…), and the
   user's hooks (graft) wrote `graft/`, `.gitignore` and `.ignore` into the probe repo, which would land with the diff.
   `--disable hooks` covers hooks.json. Auth still comes from `CODEX_HOME`. The global `~/.codex/AGENTS.md` still loads.
+- Windows: with the user config ignored, `-s workspace-write` silently runs read-only (seen live in the smoke run:
+  the worker reported "the session is read-only"). Every run on Windows passes `-c windows.sandbox="<mode>"`, the
+  user's `[windows] sandbox` from config.toml, else `unelevated`.
 - Sandbox `workspace-write` keeps writes inside the worktree (linked `node_modules` junctions point outside it, so
   they stay read-only) and has no network. Approval `never`: a command the sandbox refuses fails back to the model.
 

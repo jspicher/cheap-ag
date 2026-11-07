@@ -29,9 +29,11 @@ async function scenario(runs: Action[][], opts: { codex?: boolean; allow?: strin
   const state = mkdtempSync(join(tmpdir(), "cheapag-codex-"));
   onTestFinished(() => removeDir(state));
   writeFileSync(join(state, "script.json"), JSON.stringify(runs));
+  // the user's Codex config, which codex/default and the Windows sandbox read (never the developer's own)
+  writeFileSync(join(state, "config.toml"), 'model = "gpt-user"\nmodel_reasoning_effort = "high"\n\n[mcp_servers.x]\ncommand = "x"\n\n[windows]\nsandbox = "elevated"\n');
   const opencode = await startFakeOpencode();
   onTestFinished(opencode.close);
-  const env = { CHEAPAG_OPENCODE_URL: opencode.url, CHEAPAG_CODEX_BIN: opts.bin ?? FAKE, CHEAPAG_FAKE_CODEX: state };
+  const env = { CHEAPAG_OPENCODE_URL: opencode.url, CHEAPAG_CODEX_BIN: opts.bin ?? FAKE, CHEAPAG_FAKE_CODEX: state, CODEX_HOME: state };
   const server = await startServer({ cwd: repo.dir, env, logins: { "opencode-go": "go-key" }, ...(opts.allow && { allow: opts.allow }) });
   onTestFinished(server.close);
   const cliEnv = { ...homeEnv(server.home), ...env };
@@ -63,6 +65,16 @@ test("a codex/ model runs codex exec in the worktree, lands OK, and never boots 
   expect(record.models.requested).toBe("codex/gpt-test");
   expect(record.sessionID).toBe("thread-1");
   expect(record.usage).toMatchObject({ turns: 2, costUsd: 0, inputTokens: 600, cacheRead: 400 });
+});
+
+test("codex/default runs the user's configured model and effort; on Windows it keeps their sandbox mode", async () => {
+  const s = await scenario([[{ write: "a.txt", content: "a\n" }, { report: REPORT }]], { codex: true });
+  expect(await s.delegate({ task: "Add a.txt", model: "codex/default" })).toMatch(/^OK /);
+  const { argv } = s.runs()[0];
+  expect(argv).toEqual(expect.arrayContaining(["-m", "gpt-user", "-c", 'model_reasoning_effort="high"']));
+  // without it, workspace-write runs read-only on Windows once the user config is ignored (seen live)
+  if (process.platform === "win32") expect(argv).toEqual(expect.arrayContaining(["-c", 'windows.sandbox="elevated"']));
+  else expect(argv.join(" ")).not.toContain("windows.sandbox");
 });
 
 test("a codex/ model needs its own consent: CONSENT without allow --codex, even with the provider allowed; then it runs", async () => {

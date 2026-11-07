@@ -62,15 +62,22 @@ export function codexCommand(env: NodeJS.ProcessEnv = process.env): { file: stri
  * `codex/default`: the model and effort the user's own config.toml names (top level only), since jobs run Codex with
  * `--ignore-user-config`; none named = Codex's built-in default.
  */
-function userDefaults(env: NodeJS.ProcessEnv = process.env): { model?: string; effort?: string } {
+function userDefaults(env: NodeJS.ProcessEnv = process.env): { model?: string; effort?: string; windowsSandbox?: string } {
   try {
-    const top = readFileSync(join(env.CODEX_HOME || join(homedir(), ".codex"), "config.toml"), "utf8").split(/^\s*\[/m)[0];
-    const get = (key: string) => top.match(new RegExp(`^\\s*${key}\\s*=\\s*"([^"]+)"`, "m"))?.[1];
-    return { model: get("model"), effort: get("model_reasoning_effort") };
+    const sections = readFileSync(join(env.CODEX_HOME || join(homedir(), ".codex"), "config.toml"), "utf8").split(/^\s*(?=\[)/m);
+    const get = (text: string | undefined, key: string) => text?.match(new RegExp(`^\\s*${key}\\s*=\\s*"([^"]+)"`, "m"))?.[1];
+    const windows = sections.find((s) => /^\[windows\]/.test(s));
+    return { model: get(sections[0], "model"), effort: get(sections[0], "model_reasoning_effort"), windowsSandbox: get(windows, "sandbox") };
   } catch {
     return {};
   }
 }
+
+/**
+ * Seen live on Windows (codex-cli 0.167.0): without `[windows] sandbox`, which `--ignore-user-config` drops,
+ * `workspace-write` silently runs read-only. Carry the user's choice, else the one that needs no admin setup.
+ */
+const sandboxArgs = () => (process.platform === "win32" ? ["-c", `windows.sandbox="${userDefaults().windowsSandbox ?? "unelevated"}"`] : []);
 
 /**
  * Flags every run gets. `--ignore-user-config` drops the user's MCP servers (code must only reach OpenAI) and profile;
@@ -135,8 +142,8 @@ export async function openCodexSession(opts: {
     const m = model?.providerID === "codex" ? model : opts.model;
     models.add(modelName(m));
     const args = thread
-      ? [...cmd.args, "exec", "resume", thread, ...COMMON, "-c", 'sandbox_mode="workspace-write"', ...modelArgs(m), "-"]
-      : [...cmd.args, "exec", ...COMMON, "-s", "workspace-write", "-C", directory, ...modelArgs(m), "-"];
+      ? [...cmd.args, "exec", "resume", thread, ...COMMON, "-c", 'sandbox_mode="workspace-write"', ...sandboxArgs(), ...modelArgs(m), "-"]
+      : [...cmd.args, "exec", ...COMMON, "-s", "workspace-write", ...sandboxArgs(), "-C", directory, ...modelArgs(m), "-"];
     const text = thread ? (/\bcall finish\b/.test(prompt) ? `${prompt}\n\n${FINISH_REMINDER}` : prompt) : `${CODEX_RULES}\n\n${prompt}`;
 
     return new Promise<RunResult>((resolve) => {
