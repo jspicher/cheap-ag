@@ -199,7 +199,8 @@ With the [Codex CLI](https://github.com/openai/codex) installed and signed in, `
 
 - Code goes to OpenAI, so it needs its own opt-in: run `npx cheap-agent allow --codex` (or `/cheapag:allow --codex`) in the project. It doesn't change, or need, the consent for your Cheap Agent provider.
 - Codex runs in the job's worktree with `codex exec --sandbox workspace-write`, no approvals and no network, and without your Codex config, MCP servers or hooks (so nothing else sees the code and no hook writes into the worktree). Set `CHEAPAG_CODEX_BIN` if `codex` isn't on your PATH.
-- Caps, checks, self-fixes and landing work as usual. A Codex task never asks a question (it notes ambiguities under risks), has no escalation model, and shows `cost=$0.000`: a ChatGPT plan reports no price. Your plan's usage limit ends the job as BUDGET.
+- Caps, checks, self-fixes and landing work as usual. When a check still fails after the self-fixes, the task escalates by resuming the same Codex thread once at high reasoning effort (never lower than your config's). A Codex task never asks a question (it notes ambiguities under risks) and shows `cost=$0.000`: a ChatGPT plan reports no price. Your plan's usage limit ends the job as BUDGET.
+- Codex alone needs no `npx cheap-agent login`: without one, `codex/` tasks still run, `ping` reports `provider=none`, and every other `delegate` or `research` asks you to log in.
 - `delegate` only for now: `research` on a `codex/` model is refused. Design notes: [docs/codex-worker.md](docs/codex-worker.md).
 
 ## Orchestrators and git worktrees

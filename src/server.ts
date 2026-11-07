@@ -6,7 +6,7 @@ import type { ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { cleanProject, gitignoreHint } from "./cleanup.js";
 import { loadConfig, type HardTasks, type TakeOver } from "./config.js";
 import { presetHere, readEngines } from "./consent.js";
-import { detectProvider, NO_PROVIDER, redact, type Provider } from "./credentials.js";
+import { detectProvider, LOGIN_COMMAND, NO_PROVIDER, redact, type Provider } from "./credentials.js";
 import { delegate, jobs, landJobs, recoverJobs, reply } from "./jobs.js";
 import { debugLogPath, ensureOpencode, stopOpencode } from "./opencode.js";
 import { PLAN_FORMAT } from "./plan.js";
@@ -132,8 +132,9 @@ export async function serve(host: "claude" | "codex" = "claude") {
     prepare(dir);
     return dir;
   };
-  /** OpenCode boots once per process; its config goes under the repo of the call that boots it. */
-  const opencodeFor = (provider: Provider, root: string) => (route: Route, picked?: string) => ensureOpencode(provider, root, route, picked);
+  /** OpenCode boots once per process; its config goes under the repo of the call that boots it. Without a login it never boots. */
+  const opencodeFor = (provider: Provider | undefined, root: string) => (route: Route, picked?: string) =>
+    provider ? ensureOpencode(provider, root, route, picked) : Promise.reject(new Error(NO_PROVIDER.replace(/^FAIL reason: /, "")));
   /** Worker progress as MCP progress notifications to the calling request, when it asked for them. */
   const progressTo = (extra: { _meta?: { progressToken?: string | number }; sendNotification: (n: ServerNotification) => Promise<void> }) =>
     (progress: number, message: string) => {
@@ -149,15 +150,16 @@ export async function serve(host: "claude" | "codex" = "claude") {
     },
     async ({ root }) => {
       const provider = detectProvider();
-      if (!provider) return safeText(NO_PROVIDER);
       try {
         // ping works outside a repository; a given root must be one, and is reported resolved
         const dir = root === undefined ? undefined : callRoot(root);
-        const opencode = await ensureOpencode(provider, dir);
         const at = dir === undefined ? "" : ` root=${dir}`;
         // only when this repo opted in: Codex is a second engine, picked per call (docs/codex-worker.md)
         const codex = codexHere(dir) ? " codex=allowed" : "";
         const debug = debugLogPath ? ` debug_log=${debugLogPath}` : "";
+        // no OpenCode login: Codex jobs still run where the repo allows them, so the server is up, without OpenCode
+        if (!provider) return safeText(`OK cheapag ${version} provider=none${codex}${at}${debug}; run ${LOGIN_COMMAND} for OpenCode workers`);
+        const opencode = await ensureOpencode(provider, dir);
         return safeText(`OK cheapag ${version} opencode=${opencode.version} provider=${provider.provider} via=${provider.via} preset=${presetHere(provider.provider, dir)}${codex}${at}${debug}`);
       } catch (err) {
         return safeText(`FAIL reason: ${(err as Error).message}`);
@@ -187,8 +189,8 @@ export async function serve(host: "claude" | "codex" = "claude") {
       _meta: ALWAYS_LOAD,
     },
     async (input, extra) => {
+      // without an OpenCode login only codex/ models run; delegate answers NO_PROVIDER for any other
       const provider = detectProvider();
-      if (!provider) return safeText(NO_PROVIDER);
       try {
         const root = repoFor(input.root);
         const req = { ...input, root, ...(host === "codex" && { wait: false }) };
@@ -237,7 +239,7 @@ export async function serve(host: "claude" | "codex" = "claude") {
       },
     },
     async (input, extra) => {
-      if (!detectProvider()) return safeText(NO_PROVIDER);
+      // reply, jobs and land need no OpenCode login: they act on jobs already started (Codex ones too)
       try {
         const root = repoFor(input.root);
         return safeText(withHint(await reply({ ...input, root }, progressTo(extra)), root));
@@ -259,7 +261,6 @@ export async function serve(host: "claude" | "codex" = "claude") {
       },
     },
     async (input, extra) => {
-      if (!detectProvider()) return safeText(NO_PROVIDER);
       try {
         const root = repoFor(input.root);
         return safeText(withHint(await jobs({ ...input, root }, progressTo(extra)), root));
@@ -282,10 +283,9 @@ export async function serve(host: "claude" | "codex" = "claude") {
     },
     async (input, extra) => {
       const provider = detectProvider();
-      if (!provider) return safeText(NO_PROVIDER);
       try {
         const root = repoFor(input.root);
-        // landing a batch's last group runs its integration check, which may start a fix job
+        // landing a batch's last group runs its integration check, which may start a fix job (that one needs a login)
         return safeText(await landJobs({ ...input, root }, { provider, opencode: opencodeFor(provider, root), progress: progressTo(extra) }));
       } catch (err) {
         return safeText(failBlock((err as Error).message));

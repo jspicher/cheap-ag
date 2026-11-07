@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
+import { codexEscalation } from "./codex.js";
 import { providerLabel, type Provider } from "./credentials.js";
 import { failBlock, renderConsent } from "./report.js";
 import { loadConfig, localServer } from "./config.js";
@@ -76,7 +77,10 @@ export function codexModel(root: string, requested?: string): WorkerModel | unde
   return /^codex\/\S+$/.test(name) ? { providerID: "codex", id: name.slice("codex/".length) } : undefined;
 }
 
-/** The gate for a Codex job: its own opt-in, never the OpenCode provider's. The route is the model alone (no fallbacks, no escalation). */
+/**
+ * The gate for a Codex job: its own opt-in, never the OpenCode provider's. The route is the model alone (no fallbacks);
+ * its escalation is the same model at high reasoning effort.
+ */
 export function codexGate(root: string, m: WorkerModel): { block: string } | { route: Route } {
   if (!readEngines(root).codex) {
     return {
@@ -88,7 +92,7 @@ export function codexGate(root: string, m: WorkerModel): { block: string } | { r
       }),
     };
   }
-  return { route: { implement: m, fallbacks: [], research: m, researchFallbacks: [] } };
+  return { route: { implement: m, fallbacks: [], escalation: codexEscalation(m), research: m, researchFallbacks: [] } };
 }
 
 // a local model is named with its server: pointing the same model id at another URL is another recipient

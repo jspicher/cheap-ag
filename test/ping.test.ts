@@ -53,9 +53,9 @@ test("delegate and research load upfront in Claude Code, with descriptions that 
   for (const t of tools.filter((t) => !["delegate", "research"].includes(t.name))) expect(t._meta?.["anthropic/alwaysLoad"]).toBeUndefined();
 });
 
-test("ping with no worker credentials fails with setup instructions", async () => {
-  expect(await callText(server.client, "ping")).toBe(
-    "FAIL reason: no worker provider; run npx cheap-agent login",
+test("ping with no worker credentials is up, says provider=none and how to log in, and boots no OpenCode", async () => {
+  expect(await callText(server.client, "ping")).toMatch(
+    /^OK cheapag \S+ provider=none; run npx cheap-agent login for OpenCode workers$/,
   );
 });
 
