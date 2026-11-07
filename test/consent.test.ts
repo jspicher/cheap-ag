@@ -167,7 +167,7 @@ test("cheapag allow rejects unknown arguments and needs a login and a git repo",
     }
     throw new Error("allow succeeded");
   };
-  expect(fails(repo.dir, env, ["--everything"])).toContain("usage: cheapag allow [--zdr-only | --models <provider/model,…>]");
+  expect(fails(repo.dir, env, ["--everything"])).toContain("usage: cheapag allow [--zdr-only | --models <provider/model,…> | --codex]");
   expect(fails(repo.dir, hermeticHome().env, [])).toContain("no worker provider; run npx cheap-agent login first");
   mkdirSync(join(home, "not-a-repo"));
   expect(fails(join(home, "not-a-repo"), env, [])).toContain("is not inside a git repository");

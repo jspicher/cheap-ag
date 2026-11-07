@@ -1,12 +1,12 @@
 import { spawnSync } from "node:child_process";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { consentGate, describe, writeConsent, type Consent } from "./consent.js";
+import { allowCodex, consentGate, describe, writeConsent, type Consent } from "./consent.js";
 import { detectProvider, LOGIN_COMMAND, providerLabel, redact } from "./credentials.js";
 import { modelName, routeModels } from "./routing.js";
 import { projectRoot } from "./workspace.js";
 
-const USAGE = "usage: cheapag allow [--zdr-only | --models <provider/model,…>]";
+const USAGE = "usage: cheapag allow [--zdr-only | --models <provider/model,…> | --codex]";
 
 /**
  * `cheapag allow`: the developer's opt-in for the current repo (spec: Consent). Non-interactive, so the plugin's
@@ -15,6 +15,8 @@ const USAGE = "usage: cheapag allow [--zdr-only | --models <provider/model,…>]
  */
 export function allow(args: string[]): number {
   const out = (line: string) => process.stdout.write(redact(line) + "\n");
+  // Codex is its own recipient (OpenAI): its opt-in is separate, and needs no OpenCode login (docs/codex-worker.md)
+  if (args.length === 1 && args[0] === "--codex") return allowCodexHere(out);
   let consent: Omit<Consent, "provider" | "approvedAt">;
   if (!args.length) consent = { mode: "all" };
   else if (args.length === 1 && args[0] === "--zdr-only") consent = { mode: "zdr-only" };
@@ -43,11 +45,30 @@ export function allow(args: string[]): number {
   const gate = consentGate(root, provider.provider);
   if ("block" in gate) out(`! ${gate.block}`);
   else out(`  models: ${routeModels(gate.route).map(modelName).join(", ")}`);
-  // .cheapag/ state is local: keep it out of `git status` without touching the repo's tracked .gitignore
+  excludeState(root, out);
+  return 0;
+}
+
+/** `cheapag allow --codex`: code from this repo may go to OpenAI through the Codex CLI, for delegate's codex/ models. */
+function allowCodexHere(out: (line: string) => void): number {
+  let root: string;
+  try {
+    root = projectRoot(process.cwd());
+  } catch (err) {
+    out(`✗ ${(err as Error).message}`);
+    return 1;
+  }
+  allowCodex(root);
+  out(`✓ ${root}: code may go to OpenAI through the Codex CLI (delegate with model codex/<model> or codex/default)`);
+  excludeState(root, out);
+  return 0;
+}
+
+/** .cheapag/ state is local: keep it out of `git status` without touching the repo's tracked .gitignore. */
+function excludeState(root: string, out: (line: string) => void) {
   if (spawnSync("git", ["check-ignore", "-q", ".cheapag"], { cwd: root, stdio: "pipe" }).status !== 0) {
     mkdirSync(join(root, ".git", "info"), { recursive: true });
     appendFileSync(join(root, ".git", "info", "exclude"), ".cheapag/\n");
     out("✓ .cheapag/ added to .git/info/exclude (local, never committed)");
   }
-  return 0;
 }
