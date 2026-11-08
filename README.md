@@ -131,6 +131,8 @@ node dist/index.js allow --codex --repo /absolute/path/to/project
 
 Project settings live in `cheapag.json`; user settings live in `~/.config/cheapag/config.json`. For example:
 
+`limits.repro_by_turns` defaults to `30`: a bug-fix step with checks that has made no edits stops at that turn (×2 for medium tasks, ×3 for hard tasks). This is past the default `max_turns` of `25`, giving diagnosis time to finish within the normal turn budget. Set it lower to stop unproductive workers sooner.
+
 ```json
 {
   "aliases": { "cx": "codex/default" },

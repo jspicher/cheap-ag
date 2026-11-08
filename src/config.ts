@@ -22,7 +22,7 @@ export type Retention = { unlanded_worktree_days: number; job_log_days: number }
 
 const DEFAULTS: Config = {
   link_dirs: ["node_modules", ".venv", "venv", "vendor"], allow_commands: ["npx tsc --noEmit"],
-  limits: { max_turns: 25, max_minutes: 20, max_cost_usd: 0.5, max_parallel: 3, max_blocked_minutes: 60, repro_by_turns: 20, takeover_calls: 15 },
+  limits: { max_turns: 25, max_minutes: 20, max_cost_usd: 0.5, max_parallel: 3, max_blocked_minutes: 60, repro_by_turns: 30, takeover_calls: 15 },
   retention: { unlanded_worktree_days: 2, job_log_days: 7 },
   models: {}, // the provider's role defaults (src/routing.ts)
   aliases: {}, // short names for delegate's and research's `model`, e.g. { "glm": "openrouter/z-ai/glm-5.3" }
