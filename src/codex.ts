@@ -241,6 +241,8 @@ export async function openCodexSession(opts: {
       return thread ?? "";
     },
     run,
+    // Backend-cell rotation is an OpenCode recovery operation; Codex resumes its own thread.
+    rotate: async () => false,
     totals,
   };
 }

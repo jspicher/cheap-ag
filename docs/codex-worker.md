@@ -40,9 +40,8 @@ Codex needs no OpenCode provider, so the server runs without one:
   answers `FAIL reason: no worker provider; run npx cheap-agent login`.
 - `ping` answers `OK cheapag <version> provider=none[ codex=allowed][ root=…]; run npx cheap-agent login for OpenCode
   workers` and boots no OpenCode.
-- `jobs`, `reply` and `land` need no login: they act on jobs already started. Landing a batch's last group whose
-  integration check fails starts its fix job on the OpenCode route, which then fails with `no worker provider for a fix
-  job`.
+- `jobs`, `reply` and `land` need no login: they act on jobs already started. A batch's integration repair keeps its
+  explicit model and engine, including when `land` starts the repair later. Codex repairs need only the Codex opt-in.
 - A Codex job's record says `provider: "codex"` (also when an OpenCode provider is logged in): its code went to OpenAI.
 - `cheapag status` already prints `provider=none (run npx cheap-agent login)` and the `codex:` line.
 
@@ -131,6 +130,4 @@ more `resume` (bounded by its own 30 s timeout, as for OpenCode).
 
 - `research` on Codex (would need a read-only sandbox run and the research block format); FAILs with a reason.
 - Escalation to a second Codex model (escalation stays on the job's model, at a higher effort).
-- A Codex batch's integration fix job runs on Codex when `delegate` starts it, but on the OpenCode route when `land`
-  starts it (landing a batch's last group), since `land` takes no `model`.
 - `cheapag status`/`ping` only show whether Codex is allowed here; they do not run `codex --version`.

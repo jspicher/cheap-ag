@@ -4,7 +4,7 @@ import { codexEscalation } from "./codex.js";
 import { providerLabel, type Provider } from "./credentials.js";
 import { failBlock, renderConsent } from "./report.js";
 import { loadConfig, localServer } from "./config.js";
-import { fullRoute, model, modelName, presetOf, routeModels, type Route, type WorkerModel } from "./routing.js";
+import { effectiveModels, fullRoute, model, modelName, presetOf, routeModels, type Route, type WorkerModel } from "./routing.js";
 import { projectRoot } from "./workspace.js";
 
 /**
@@ -34,7 +34,7 @@ export function readConsent(root: string): Consent | undefined {
 export function writeConsent(root: string, consent: Consent) {
   mkdirSync(join(root, ".cheapag"), { recursive: true });
   // an explicit model list bounds the recipients by itself; the other modes are tied to the route they were shown
-  const route = consent.mode === "models" ? undefined : routeNames(fullRoute(consent.provider, configuredModels(root)));
+  const route = consent.mode === "models" ? undefined : routeNames(fullRoute(consent.provider, configuredModels(root, consent.provider)));
   // another engine's opt-in is its own: a new provider consent keeps it
   const engines = readRecord(root)?.engines;
   writeFileSync(file(root), JSON.stringify({ ...consent, route, ...(engines !== undefined && { engines }) }, null, 2) + "\n");
@@ -95,15 +95,26 @@ export function codexGate(root: string, m: WorkerModel): { block: string } | { r
   return { route: { implement: m, fallbacks: [], escalation: codexEscalation(m), research: m, researchFallbacks: [] } };
 }
 
+/** Records the current route as the repo's consented one (after a model pick on OpenRouter); nothing without consent. */
+export function acceptRoute(root: string) {
+  const consent = readConsent(root);
+  if (consent) writeConsent(root, consent);
+}
+
 // a local model is named with its server: pointing the same model id at another URL is another recipient
 const routeNames = (r: Route) => {
   const at = r.implement.providerID === "local" ? `@${localServer()?.base_url}` : "";
   return routeModels(r).map((m) => modelName(m) + at);
 };
 
-/** The models config now routes to other models than the consent was shown (not judged on a damaged config, which the job's own load reports; a record from before routes were kept has none). */
+/**
+ * The models config now routes to other models than the consent was shown (not judged on a damaged config, which the job's own load reports; a record from before routes were kept has none).
+ * Within one provider the code goes to the same company, so a model change never asks again; OpenRouter (the model picks the upstream)
+ * and a local server (a URL is a recipient) keep the route check.
+ */
 export function routeMoved(root: string, consent: Consent) {
-  const models = configuredModels(root);
+  if (consent.provider !== "openrouter" && consent.provider !== "local") return false;
+  const models = configuredModels(root, consent.provider);
   return !!models && !!consent.route && String(consent.route) !== String(routeNames(fullRoute(consent.provider, models)));
 }
 
@@ -113,7 +124,7 @@ export function presetHere(provider: Provider["provider"], cwd = process.cwd()) 
   try {
     root = projectRoot(root);
   } catch {} // outside a repo only the user's config applies
-  return presetOf(provider, configuredModels(root));
+  return presetOf(provider, configuredModels(root, provider));
 }
 
 // OpenRouter's provider-routing preference that restricts it to Zero Data Retention endpoints (openrouter.ai/docs, provider routing)
@@ -148,7 +159,7 @@ function withZdr(m: WorkerModel): WorkerModel {
  */
 export function consentGate(root: string, provider: Provider["provider"]): { block: string } | { route: Route } {
   const consent = readConsent(root);
-  const full = fullRoute(provider, configuredModels(root));
+  const full = fullRoute(provider, configuredModels(root, provider));
   // consent names the provider it was given for: a new login elsewhere needs a new opt-in; so does another route
   if (!consent || consent.provider !== provider || routeMoved(root, consent)) return { block: consentBlock(root, provider, full) };
   const zdr = consent.mode === "zdr-only" && provider === "openrouter";
@@ -183,7 +194,8 @@ export function consentGate(root: string, provider: Provider["provider"]): { blo
 export function chooseModel(root: string, provider: Provider["provider"], route: Route, requested?: string): { block: string } | { route: Route } {
   if (requested === undefined) return { route };
   const aliases = configuredAliases(root);
-  const name = aliases[requested] ?? requested;
+  const onRoute = routeModels(route).find((m) => m.id === requested);
+  const name = aliases[requested] ?? (onRoute ? modelName(onRoute) : requested);
   // delegate takes Codex models before this; only research gets here with one
   if (codexModel(root, requested)) return { block: failBlock(`model ${name}: Codex models run delegate jobs only; research runs on the configured ${providerLabel(provider)} route`) };
   if (!/^[\w.-]+\/\S+$/.test(name)) {
@@ -218,10 +230,11 @@ function configuredAliases(root: string): Record<string, string> {
   }
 }
 
-/** The config's `models` (E4); a damaged config counts as none here, the job's own config load reports it. */
-function configuredModels(root: string) {
+/** The config's effective `models` (E4, preset included); a damaged config counts as none here, the job's own config load reports it. */
+function configuredModels(root: string, provider: Provider["provider"]) {
   try {
-    return loadConfig(root).models;
+    const config = loadConfig(root);
+    return effectiveModels(provider, config);
   } catch {
     return undefined;
   }
@@ -240,11 +253,11 @@ function consentBlock(root: string, provider: Provider["provider"], full: Route)
   const retentionLine = provider === "openrouter"
     ? `depends on the upstream provider OpenRouter routes to; "deny data collection" is always on; --zdr-only adds OpenRouter's zero-data-retention routing (zdr)`
     : local
-    ? `your own server; it keeps what it is set up to keep (a proxy such as LiteLLM may forward to a hosted provider)`
+    ? `up to the endpoint: your own server keeps what it is set up to keep; a gateway or vendor keeps what its terms say`
     : models.map((m) => `${m.id} = ${retention(provider, m) === "zero" ? "zero retention" : "not stated"}`).join("; ");
   return renderConsent({
     repo: basename(root),
-    send: `code from this repo → ${local ? `local server at ${local.base_url}` : providerLabel(provider)}: ${ids}`,
+    send: `code from this repo → ${local ? `custom endpoint at ${local.base_url}` : providerLabel(provider)}: ${ids}`,
     retention: retentionLine,
     // the caller passed the root, so "this root" names it; a path here would push the line past the 200-char cap
     approve: sessionRepo(root)

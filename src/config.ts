@@ -1,18 +1,18 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
-import type { ModelsConfig } from "./routing.js";
+import { PRESET_NAMES, type ModelsConfig, type Preset } from "./routing.js";
 
 /** Optional settings: the repo's `cheapag.json` overrides the user's `~/.config/cheapag/config.json` (spec E4). */
 export type Config = {
   test_cmd?: string; integration_cmd?: string; link_dirs: string[]; allow_commands: string[]; limits: Limits; retention: Retention;
-  models: ModelsConfig; aliases: Record<string, string>; escalation_skip_at: number; guard_lines: number; hard_tasks: HardTasks; takeover: TakeOver;
+  models: ModelsConfig; aliases: Record<string, string>; preset?: Preset; escalation_skip_at: number; guard_lines: number; hard_tasks: HardTasks; takeover: TakeOver;
 };
 /** Who implements a hard task (ticket 26): the worker on `models.hard`, Claude itself, or Claude's own Sonnet subagent. */
 export const HARD_TASKS = ["delegate", "self", "sonnet"] as const;
 export type HardTasks = (typeof HARD_TASKS)[number];
-/** Who finishes a step the worker could not (ticket 30): a Sonnet subagent, or Claude itself within limits.takeover_calls. */
-export const TAKE_OVER = ["sonnet", "self"] as const;
+/** Who finishes a step the worker could not (tickets 30, 51): ask the user, a Sonnet subagent, or Claude itself within limits.takeover_calls. */
+export const TAKE_OVER = ["sonnet", "self", "ask"] as const;
 export type TakeOver = (typeof TAKE_OVER)[number];
 /** Per-job caps, counted across the whole job: first run, self-fixes and escalation (spec: Models and limits); `max_parallel` bounds a batch's concurrent groups; `max_blocked_minutes` bounds a wait for `reply`. */
 export type Limits = { max_turns: number; max_minutes: number; max_cost_usd: number; max_parallel: number; max_blocked_minutes: number; repro_by_turns: number; takeover_calls: number };
@@ -21,28 +21,62 @@ export type Retention = { unlanded_worktree_days: number; job_log_days: number }
 
 const DEFAULTS: Config = {
   link_dirs: ["node_modules", ".venv", "venv", "vendor"], allow_commands: ["npx tsc --noEmit"],
-  limits: { max_turns: 25, max_minutes: 20, max_cost_usd: 0.5, max_parallel: 3, max_blocked_minutes: 60, repro_by_turns: 12, takeover_calls: 15 },
-  retention: { unlanded_worktree_days: 7, job_log_days: 30 },
+  limits: { max_turns: 25, max_minutes: 20, max_cost_usd: 0.5, max_parallel: 3, max_blocked_minutes: 60, repro_by_turns: 20, takeover_calls: 15 },
+  retention: { unlanded_worktree_days: 2, job_log_days: 7 },
   models: {}, // the provider's role defaults (src/routing.ts)
   aliases: {}, // short names for delegate's and research's `model`, e.g. { "glm": "openrouter/z-ai/glm-5.3" }
   escalation_skip_at: 0.8,
   guard_lines: 20,
   hard_tasks: "delegate",
-  takeover: "sonnet",
+  takeover: "ask",
 };
 // build output is never linked: a job must build its own (ADR-0003)
 const BUILD_OUTPUT = /^(dist|build|out|\.next|\.nuxt|target|coverage)$/;
 
-/** The user-level config every repo's `cheapag.json` overrides; `cheapag login` writes its `models` (the preset). */
+/** The user-level config every repo's `cheapag.json` overrides; `cheapag login` writes its `preset`. */
 export const userConfigFile = () => join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "cheapag", "config.json");
 
 /**
- * A local OpenAI-compatible server for the worker (llama.cpp, Strata, Ollama, LM Studio, vLLM, LiteLLM): `local` in the
+ * A custom OpenAI-compatible endpoint for the worker: a local server (llama.cpp, Strata, Ollama, LM Studio, vLLM) or a
+ * hosted gateway (LiteLLM, Azure, any vendor's OpenAI-compatible API): `local` in the
  * user config only, so a repo's cheapag.json can never point the worker at another endpoint. `model` is the server's
- * model id; `api_key_file` names a file OpenCode reads the key from (Cheap Agent never reads it); `context` and `output`
+ * model id; `api_key_file` names a file and `api_key_env` an environment variable OpenCode reads the key from (Cheap Agent
+ * never reads either); `context` and `output`
  * are the model's token limits, which OpenCode needs to compact a long session before the server rejects it.
  */
-export type LocalServer = { base_url: string; model: string; api_key_file?: string; context?: number; output?: number };
+export type LocalServer = {
+  base_url: string; model: string; api_key_file?: string; api_key_env?: string; context?: number; output?: number;
+  /** USD per million tokens, for spend tracking and the job cost cap; without it a job's cost reads $0. */
+  price?: { input: number; output: number };
+};
+
+/** Whether a URL's host is this machine or a private network (where plain http is fine): loopback, RFC 1918, CGNAT, link-local, *.local, single-label names and home LAN suffixes. */
+export function privateHost(url: string) {
+  let host: string;
+  try {
+    host = new URL(url).hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  } catch {
+    return false;
+  }
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host === "::1") return true;
+  if (host.includes(":")) return /^f[cd]/.test(host) || host.startsWith("fe80:"); // IPv6 unique-local and link-local
+  if (!host.includes(".")) return true; // single-label machine names, e.g. gpu-box
+  if (/\.(lan|home|internal|home\.arpa)$/.test(host)) return true;
+  const ip = host.split(".").map(Number);
+  if (ip.length !== 4 || ip.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return false;
+  const [a, b] = ip;
+  return a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254) || (a === 100 && b >= 64 && b <= 127);
+}
+
+/** The provider `cheapag provider` (or a login) picked, from the user config; undefined when none is set or the file is damaged. */
+export function chosenProvider(): string | undefined {
+  try {
+    const value = JSON.parse(readFileSync(userConfigFile(), "utf8")) as { provider?: unknown };
+    return typeof value?.provider === "string" ? value.provider : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /** The user config's `local` server, undefined when none is set; throws on a damaged one. */
 export function localServer(): LocalServer | undefined {
@@ -54,16 +88,21 @@ export function localServer(): LocalServer | undefined {
 
 function parseLocal(local: unknown, file: string): LocalServer {
   if (typeof local !== "object" || local === null || Array.isArray(local)) throw new Error(`${file}: local must be an object`);
-  const { base_url, model, api_key_file, context, output } = local as Record<string, unknown>;
+  const { base_url, model, api_key_file, api_key_env, context, output, price } = local as Record<string, unknown>;
   if (typeof base_url !== "string" || !/^https?:\/\/\S+$/.test(base_url)) throw new Error(`${file}: local.base_url must be an http(s) URL, e.g. http://127.0.0.1:8080/v1`);
   if (typeof model !== "string" || !model.trim()) throw new Error(`${file}: local.model must be the server's model id`);
   if (api_key_file !== undefined && (typeof api_key_file !== "string" || !isAbsolute(api_key_file))) throw new Error(`${file}: local.api_key_file must be an absolute path`);
+  if (api_key_env !== undefined && (typeof api_key_env !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(api_key_env))) throw new Error(`${file}: local.api_key_env must be an environment variable name, e.g. MY_GATEWAY_KEY`);
+  if (api_key_file !== undefined && api_key_env !== undefined) throw new Error(`${file}: local takes api_key_file or api_key_env, not both`);
+  const p = price as { input?: unknown; output?: unknown } | undefined;
+  if (p !== undefined && (typeof p !== "object" || p === null || ![p.input, p.output].every((v) => typeof v === "number" && v >= 0))) throw new Error(`${file}: local.price must be { "input": <USD per million tokens>, "output": <USD per million tokens> }`);
   for (const [key, v] of [["context", context], ["output", output]] as const) {
     if (v !== undefined && (typeof v !== "number" || !Number.isInteger(v) || v <= 0)) throw new Error(`${file}: local.${key} must be a positive whole number of tokens`);
   }
   return {
     base_url: base_url.replace(/\/+$/, ""), model: model.trim(),
-    ...(api_key_file !== undefined && { api_key_file }), ...(context !== undefined && { context: context as number }), ...(output !== undefined && { output: output as number }),
+    ...(api_key_file !== undefined && { api_key_file }), ...(api_key_env !== undefined && { api_key_env: api_key_env as string }),
+    ...(p !== undefined && { price: { input: p.input as number, output: p.output as number } }), ...(context !== undefined && { context: context as number }), ...(output !== undefined && { output: output as number }),
   };
 }
 
@@ -94,10 +133,18 @@ function read(file: string): Partial<Omit<Config, "limits" | "retention">> & { l
     throw new Error(`${file} is not valid JSON: ${(err as Error).message}`);
   }
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error(`${file} must hold a JSON object`);
-  const { test_cmd, integration_cmd, link_dirs, allow_commands, limits, retention, models, aliases, escalation_skip_at, guard_lines, hard_tasks, takeover, local } = value as Record<string, unknown>;
+  const { test_cmd, integration_cmd, link_dirs, allow_commands, limits, retention, models, aliases, escalation_skip_at, guard_lines, hard_tasks, takeover, local, preset, provider } = value as Record<string, unknown>;
+  if (provider !== undefined) {
+    if (file !== userConfigFile()) throw new Error(`${file}: provider can only be set in ${userConfigFile()}`);
+    if (typeof provider !== "string") throw new Error(`${file}: provider must be a provider id, e.g. opencode-go; switch with cheapag provider`);
+  }
   if (local !== undefined) {
     if (file !== userConfigFile()) throw new Error(`${file}: local can only be set in ${userConfigFile()}, never in a repo`);
     parseLocal(local, file);
+  }
+  if (preset !== undefined) {
+    if (file !== userConfigFile()) throw new Error(`${file}: preset can only be set in ${userConfigFile()}`);
+    if (!PRESET_NAMES.includes(preset as Preset)) throw new Error(`${file}: preset must be one of ${PRESET_NAMES.join(", ")}`);
   }
   if (limits !== undefined && (typeof limits !== "object" || limits === null || Array.isArray(limits))) throw new Error(`${file}: limits must be an object`);
   const caps: Partial<Limits> = {};
@@ -137,6 +184,12 @@ function read(file: string): Partial<Omit<Config, "limits" | "retention">> & { l
     if (!/^[\w.-]+$/.test(alias)) throw new Error(`${file}: alias "${alias}" may only use letters, digits, ".", "_" and "-"`);
     if (!name(target)) throw new Error(`${file}: aliases.${alias} must be a provider/model name, e.g. openrouter/z-ai/glm-5.3`);
   }
+  if (roles.variants !== undefined) {
+    const variants = roles.variants;
+    if (typeof variants !== "object" || variants === null || Array.isArray(variants) || Object.values(variants).some((v) => typeof v !== "string")) {
+      throw new Error(`${file}: models.variants must map provider/model names to an effort, e.g. {"opencode-go/deepseek-v4.1-flash": "high"}`);
+    }
+  }
   if (escalation_skip_at !== undefined && (typeof escalation_skip_at !== "number" || !(escalation_skip_at > 0 && escalation_skip_at <= 1))) {
     throw new Error(`${file}: escalation_skip_at must be a number above 0 and at most 1`);
   }
@@ -167,6 +220,7 @@ function read(file: string): Partial<Omit<Config, "limits" | "retention">> & { l
     retention: keep,
     ...(models !== undefined && { models: roles as ModelsConfig }),
     ...(aliases !== undefined && { aliases: aliases as Record<string, string> }),
+    ...(preset !== undefined && { preset: preset as Preset }),
     ...(escalation_skip_at !== undefined && { escalation_skip_at }),
     ...(guard_lines !== undefined && { guard_lines }),
     ...(hard_tasks !== undefined && { hard_tasks: hard_tasks as HardTasks }),

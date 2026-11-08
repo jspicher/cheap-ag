@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpath
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { expect, onTestFinished, test, vi } from "vitest";
 import { redactLog } from "../src/credentials.js";
 import { debugLog, serveArgs } from "../src/opencode.js";
@@ -189,7 +189,7 @@ test("an OpenCode Zen key never reaches output or config; Zen is built into Open
 
 test("boots the bundled OpenCode lazily on localhost, restarts it after a crash, and kills its process group on exit", async () => {
   // PATH without Homebrew & co: only the bundled binary can be found
-  const PATH = [dirname(process.execPath), "/usr/bin", "/bin"].join(":");
+  const PATH = [dirname(process.execPath), ...(process.platform === "win32" ? [join(process.env.SystemRoot ?? "C:\\Windows", "System32")] : ["/usr/bin", "/bin"])].join(delimiter);
   const server = await startServer({ env: { PATH }, logins: { "opencode-go": "go-key-value" } });
   onTestFinished(server.close);
 

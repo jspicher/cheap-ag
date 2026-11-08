@@ -1,7 +1,9 @@
+import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { isAbsolute, join, relative } from "node:path";
-import { LOGIN_COMMAND, NO_PROVIDER, redact, type Provider } from "./credentials.js";
+import { gzipSync } from "node:zlib";
+import { dirname, isAbsolute, join, relative } from "node:path";
+import { NO_PROVIDER, redact, type Provider } from "./credentials.js";
 import { holdOpencode, type Opencode } from "./opencode.js";
 import { needsOf, overlap, parsePlan, PLAN_FORMAT, selectGroups, type Group, type Plan, type PlanStep } from "./plan.js";
 import { failBlock, renderBatch, renderJob, type BatchRecord, type JobRecord } from "./report.js";
@@ -9,7 +11,7 @@ import { loadConfig, type Config } from "./config.js";
 import { projectScripts, workerRuleset } from "./permissions.js";
 import { chooseModel, codexGate, codexModel, consentGate, opencodeRoute } from "./consent.js";
 import { isCodex, openWorker, releaseWorker } from "./engine.js";
-import { chain, DIFFICULTIES, escalationSkip, modelName, recordSpend, runRouted, tierModel, usedBalance, type Difficulty, type Route } from "./routing.js";
+import { chain, DIFFICULTIES, escalationSkip, modelName, recordSpend, routeModels, runRouted, tierModel, usedBalance, type Difficulty, type Route } from "./routing.js";
 import { checkAllows, envFailure, errorTail, runVerify, sameFailure, verifyCommands, type VerifyRun } from "./verify.js";
 import { finishReport, releaseDirectory, type FinishReport, type Question, type RunResult, type Session } from "./worker.js";
 import {
@@ -44,9 +46,12 @@ const FIX_WORDS = /\b(bug|fix(?:es|ed|ing)?|fail(?:s|ed|ing|ure)?|error|crash(?:
  * `brief`: a research scout brief (ticket 23.4), resolved to its text, handed to every worker of the delegation.
  * `source`: the user's request or the issue, verbatim (ticket 28), so the worker can check the step against it.
  */
-export type DelegateInput = { plan: string; steps: string; note?: string; wait?: boolean; brief?: string; source?: string; difficulty?: Difficulty };
+export type DelegateInput = { plan: string; steps: string; note?: string; wait?: boolean; brief?: string; source?: string; difficulty?: Difficulty; model?: string };
 /** What the tool takes: a plan file and steps, or (one step, no plan file) an inline task with optional files and done-when. */
 export type DelegateRequest = Partial<DelegateInput> & { task?: string; files?: string; done_when?: string; root?: string; model?: string };
+
+/** An allowed model by full `provider/id` or bare id. */
+const pickModel = (route: Route, name?: string) => (name ? routeModels(route).find((m) => modelName(m) === name || m.id === name) : undefined);
 
 /** A brief longer than this is cut in the worker's prompt. */
 const MAX_BRIEF = 6_000;
@@ -117,11 +122,13 @@ export async function delegate(req: DelegateRequest, ctx: WorkerContext): Promis
   if (req.task !== undefined) {
     const made = inlinePlan(root, req);
     if ("fail" in made) return failBlock(made.fail);
-    input = { plan: made.plan, steps: "1", note: req.note, wait: req.wait, brief: brief.text, source, difficulty: req.difficulty };
-  } else if (req.plan && req.steps) input = { plan: req.plan, steps: req.steps, note: req.note, wait: req.wait, brief: brief.text, source, difficulty: req.difficulty };
+    input = { plan: made.plan, steps: "1", note: req.note, wait: req.wait, brief: brief.text, source, difficulty: req.difficulty, model: req.model };
+  } else if (req.plan && req.steps) input = { plan: req.plan, steps: req.steps, note: req.note, wait: req.wait, brief: brief.text, source, difficulty: req.difficulty, model: req.model };
   else return failBlock("give task (what to change, files, how to check), or plan and steps");
   // only the caller's path: an inline task's own plan lives under .cheapag/plans/
   if (req.task === undefined && input.plan.split(/[\\/]/).filter((p) => p && p !== ".")[0] === ".cheapag") return failBlock(`plan ${input.plan} is under .cheapag/, Cheap Agent's state folder, which workers cannot see; save plans under .plan/`);
+  // The gates resolved aliases and codex/default already. Keep that canonical pick for every group and repair job.
+  if (req.model !== undefined) input.model = modelName(route.implement);
   const planFile = join(root, input.plan);
   if (isAbsolute(input.plan) || !inside(root, planFile)) return failBlock(`plan ${input.plan} must be a path inside the repository, relative to its root`);
   if (!existsSync(planFile)) return failBlock(`plan ${input.plan} not found`);
@@ -149,8 +156,7 @@ export async function delegate(req: DelegateRequest, ctx: WorkerContext): Promis
   if (busy) return failBlock(`${busy} in the working tree; finish or abort it, then delegate again`);
 
   // one boot with one route for every group: a config change would restart OpenCode under the batch's running jobs
-  // a Codex job keeps no picked model for a batch's fix job: that job runs on the OpenCode route (docs/codex-worker.md)
-  const picked = req.model === undefined || codex ? undefined : modelName(route.implement);
+  const picked = req.model === undefined ? undefined : modelName(route.implement);
   const opencode = codex ? undefined : await ctx.opencode(opencodeRoute(gate.route, route), picked);
   const release = codex ? () => {} : holdOpencode();
   const shared = { root, input, plan, config, route, opencode, provider: ctx.provider, progress: ctx.progress, picked };
@@ -202,7 +208,7 @@ function runGroup(g: GroupRun) {
   const stepIds = g.group.label;
   // a step's own difficulty: wins over the call's; in a range the hardest step decides (ticket 26)
   const difficulty = [...DIFFICULTIES].reverse().find((d) => steps.some((s) => s.fields.difficulty === d)) ?? input.difficulty;
-  const model = tierModel(route, difficulty);
+  const model = pickModel(route, input.model) ?? tierModel(route, difficulty);
   // against the implement model, so a tier model shows as model= in the headline
   const requested = modelName(route.implement);
   const startedAt = new Date();
@@ -296,23 +302,20 @@ function runGroup(g: GroupRun) {
   const overTurns = () => {
     if (session && session.totals().turns - turnBase >= turnCap) stop({ cap: "turns", reason: `turn cap (${turnCap}) reached` });
   };
-  // fail fast (ticket 28): a step with checks that has no test file in its worktree by repro_by_turns stops now, so Claude
-  // takes over without a 40-turn failed job in its context (v2 hard tier: FAIL sessions averaged 482k Claude tokens, stock 385k)
-  // shortcut: counts any test file in the worktree's status, carried-over dirty ones included; tighten to the job's own edits if that misfires
+  // fail fast (ticket 28): a step with checks that has edited nothing by repro_by_turns stops now, so Claude takes over
+  // without a 40-turn failed job in its context; any edit, source or test, lifts the stop and the job runs to its normal cap
   // ticket 37: only a fix has a bug to reproduce; a feature step is never stopped for lacking a test
-  const isFix = g.fix || FIX_WORDS.test([...steps.map((s) => `${s.title} ${s.fields.do ?? ""}`), input.source ?? ""].join("\n"));
-  let reproSeen = false;
+  const kind = steps.find((s) => s.fields.kind)?.fields.kind;
+  const isFix = g.fix || (kind ? kind === "fix" : FIX_WORDS.test([...steps.map((s) => `${s.title} ${s.fields.do ?? ""}`), input.source ?? ""].join("\n")));
+  let edited = false;
   let carried = new Set<string>(); // paths already dirty when the worktree opened (carried over from the repo): not the worker's edits
   const dirty = () => git(worktree!.path, ["status", "--porcelain"]).split("\n").map((l) => l.slice(3).trim()).filter(Boolean);
   const reproDue = () => {
-    if (reproSeen || !isFix || !cmds.length || !worktree || !session || session.totals().turns < limits.repro_by_turns * scale) return;
-    // a started fix (a changed non-test file) gets double the turns to prove it; the worker may just not have written its test yet
-    const files = dirty();
-    const started = files.some((f) => !TEST_FILE.test(f) && !carried.has(f));
-    const by = limits.repro_by_turns * scale * (started ? 2 : 1);
+    if (edited || !isFix || !cmds.length || !worktree || !session) return;
+    const by = limits.repro_by_turns * scale;
     if (session.totals().turns < by) return;
-    reproSeen = files.some((f) => TEST_FILE.test(f));
-    if (!reproSeen) stop({ cap: "turns", reason: `no reproduction test by turn ${by}; ${started ? "the fix was started but never proven" : "the worker was still exploring"}` });
+    edited = dirty().some((f) => !carried.has(f));
+    if (!edited) stop({ cap: "turns", reason: `nothing edited by turn ${by}; the worker was still exploring` });
   };
   // the minute cap counts working time only: the clock is paused while the job waits BLOCKED on a reply
   let clockLeft = limits.max_minutes * 60_000;
@@ -512,10 +515,12 @@ function runGroup(g: GroupRun) {
         },
       });
       finalize("RUNNING"); // now with the worktree, so a restart can point at it
-      // a provider limit is not a cap: the worker aborts the session itself and the job falls back, or stops as BUDGET
+      // a provider limit is not a cap: the worker aborts the session itself and the job falls back, or stops as BUDGET;
+      // a transient OpenCode provider error retries once, then stops as PROVIDER
       const routed = async (text: string, on?: typeof escalation, interrupt?: AbortSignal) => {
         const r = await runRouted(session!, text, models, provider, on, interrupt);
         if (r.budget) stopped ??= { cap: "provider", reason: r.budget };
+        if (r.provider) stopped ??= { cap: "down", reason: r.provider };
         return r;
       };
       /** One prompt through the normal path: the run, then verify with up to 2 self-fixes and 1 escalation. `tag` prefixes tried: lines. */
@@ -609,7 +614,7 @@ function runGroup(g: GroupRun) {
       } else if (result.error) {
         reason = `worker error: ${result.error}`;
       } else if (!failing) { // a verify failure is explained by the error: and tried: sections, not a reason
-        ({ repro, risk: reproRisk } = await checkRepro(worktree.path, report.repro, [...cmds, ...(config.test_cmd ? [config.test_cmd] : []), ...config.allow_commands], diff.changed.map((c) => c.path), kill.signal));
+        ({ repro, risk: reproRisk } = await checkRepro(worktree, report.repro, [...cmds, ...(config.test_cmd ? [config.test_cmd] : []), ...config.allow_commands], diff.changed.map((c) => c.path), kill.signal));
         // waiting for earlier groups to land is still cancellable; the clock is paused, since an earlier group may sit BLOCKED for long
         pauseClock();
         parked = true;
@@ -646,6 +651,7 @@ function runGroup(g: GroupRun) {
       if (status === "PARTIAL") reason = undefined; // spec D5: PARTIAL says it through missing:
     } else if (conflict) status = "CONFLICT";
     const text = finalize(status);
+    if (status === "OK") gzipEvents(dir);
     finished(text);
     announce(text);
   })().catch((err: Error) => {
@@ -663,6 +669,17 @@ function runGroup(g: GroupRun) {
     announce(text);
   });
   return { job, outcome, done, record: () => last, settles: () => settled };
+}
+
+/** Compresses a settled job's (or research call's) events.jsonl; any error is ignored, nothing depends on it. */
+export function gzipEvents(dir: string): void {
+  try {
+    const file = join(dir, "events.jsonl");
+    writeFileSync(`${file}.gz`, gzipSync(readFileSync(file)));
+    rmSync(file);
+  } catch {
+    // keep the plain file
+  }
 }
 
 /**
@@ -862,37 +879,59 @@ async function findings(session: Session): Promise<string | undefined> {
   }
 }
 
-async function checkRepro(cwd: string, claim: string | undefined, allowed: string[], changed: string[], signal: AbortSignal): Promise<{ repro?: JobRecord["repro"]; risk?: string }> {
+async function checkRepro(worktree: Worktree, claim: string | undefined, allowed: string[], changed: string[], signal: AbortSignal): Promise<{ repro?: JobRecord["repro"]; risk?: string }> {
+  const cwd = worktree.path;
   if (!claim || /^n\/?a\b/i.test(claim)) return {};
   if (/^none\b/i.test(claim)) return { repro: "none", risk: `no reproduction: ${claim.replace(/^none:?\s*/i, "") || "the worker could not reproduce the problem"}` };
   const runs = (cmd: string) => runVerify(cwd, [cmd], () => {}, signal).then((r) => r[0]?.ok ?? false);
-  const unverified = (why: string) => ({ repro: "unverified" as const, risk: `reproduction not verified: ${why}` });
+  const unverified = (why: string) => ({ repro: "unverified" as const, risk: `nothing to do (the checks passed), reproduction not verified: ${why}` }); // the action first: risks are clipped at 120 chars
   if (!allowed.some((a) => claim === a || claim.startsWith(a + " "))) return unverified(`\`${claim}\` is not one of this job's check commands`);
   if (!(await runs(claim))) return unverified(`\`${claim}\` fails on the fixed code`);
   const fix = changed.filter((p) => !TEST_FILE.test(p));
   if (!fix.length) return unverified("the change has no code outside tests");
-  // set the fix aside (tests stay), run the reproduction, then restore; landing uses the diff taken before this
-  try {
-    git(cwd, ["stash", "push", "--include-untracked", "--quiet", "--", ...fix]);
-  } catch {
-    return unverified("could not set the fix aside to rerun the reproduction");
-  }
+  // set the fix aside by file (tests stay), run the reproduction, then restore; landing uses the diff taken before this.
+  // Files are saved in memory, never searched for or dropped in git's shared entry list, which the user's checkout also uses.
+  const saved = new Map<string, Buffer | null>();
   let failsWithout = false;
+  let restored = true;
   try {
+    for (const file of fix) {
+      const path = join(cwd, file);
+      saved.set(file, existsSync(path) ? readFileSync(path) : null);
+      const inBase = spawnSync("git", ["cat-file", "-e", `${worktree.base}:${file}`], { cwd, stdio: "pipe" }).status === 0;
+      if (inBase) {
+        const base = spawnSync("git", ["show", `${worktree.base}:${file}`], { cwd, stdio: "pipe", maxBuffer: 256 * 1024 * 1024 });
+        if (base.status !== 0) throw new Error(`git show ${worktree.base}:${file} failed`);
+        writeFileSync(path, base.stdout);
+      } else {
+        rmSync(path, { force: true });
+      }
+    }
     failsWithout = !(await runs(claim));
+  } catch {
+    failsWithout = false;
+    restored = false;
   } finally {
     // a failed restore only affects the worktree: the landing applies the diff taken before this check
-    try {
-      git(cwd, ["stash", "pop", "--quiet"]);
-    } catch {
-      failsWithout = false;
+    for (const [file, content] of saved) {
+      try {
+        const path = join(cwd, file);
+        if (content === null) rmSync(path, { force: true });
+        else {
+          mkdirSync(dirname(path), { recursive: true });
+          writeFileSync(path, content);
+        }
+      } catch {
+        restored = false;
+      }
     }
   }
+  if (!restored) return unverified("could not set the fix aside to rerun the reproduction");
   return failsWithout ? { repro: "fail→pass" } : unverified(`\`${claim}\` also passes without the fix`);
 }
 
-type Stop = { cap: "turns" | "minutes" | "cost" | "cancel" | "provider"; reason: string };
-const STOPPED = { minutes: "TIMEOUT", cost: "BUDGET", cancel: "CANCELLED", provider: "BUDGET" } as const;
+type Stop = { cap: "turns" | "minutes" | "cost" | "cancel" | "provider" | "down"; reason: string };
+const STOPPED = { minutes: "TIMEOUT", cost: "BUDGET", cancel: "CANCELLED", provider: "BUDGET", down: "PROVIDER" } as const;
 
 /**
  * Jobs running in this server process, by id: how `jobs cancel` and `jobs wait` reach them. `done` resolves to the final
@@ -1130,17 +1169,17 @@ async function integrateLater(root: string, config: Config, batch: string, ctx: 
   let release: (() => void) | undefined;
   let fix: ReturnType<typeof runGroup> | undefined;
   const fixer = async (): Promise<Shared> => {
-    // a fix job started here runs on the OpenCode route (docs/codex-worker.md), which needs a provider login
-    if (!ctx.provider) throw new Error(`no worker provider for a fix job; run ${LOGIN_COMMAND}`);
-    const gate = consentGate(root, ctx.provider.provider);
+    const codex = codexModel(root, record.model);
+    if (!codex && !ctx.provider) throw new Error(NO_PROVIDER);
+    const gate = codex ? codexGate(root, codex) : consentGate(root, ctx.provider!.provider);
     if ("block" in gate) throw new Error(`no consent for a fix job: ${gate.block.split("\n")[0]}`);
     // the batch's picked model, if it had one: the fix job runs on it, as the batch's groups did
-    const chosen = chooseModel(root, ctx.provider.provider, gate.route, record.model);
+    const chosen = codex ? gate : chooseModel(root, ctx.provider!.provider, gate.route, record.model);
     if ("block" in chosen) throw new Error(`the batch's model for a fix job: ${chosen.block.split("\n")[0]}`);
     const plan = parsePlan(readFileSync(join(root, record.plan), "utf8"));
-    const opencode = await ctx.opencode(opencodeRoute(gate.route, chosen.route), record.model);
-    release = holdOpencode();
-    return { root, input: { plan: record.plan, steps: record.steps }, plan, config, route: chosen.route, opencode, provider: ctx.provider, progress: ctx.progress, picked: record.model };
+    const opencode = codex ? undefined : await ctx.opencode(opencodeRoute(gate.route, chosen.route), record.model);
+    if (!codex) release = holdOpencode();
+    return { root, input: { plan: record.plan, steps: record.steps, model: record.model }, plan, config, route: chosen.route, opencode, provider: ctx.provider, progress: ctx.progress, picked: record.model };
   };
   try {
     await integrate(root, cmd, batch, record, jobRecords.map((r) => r!.landed), () => writeWhole(file, redact(JSON.stringify(record, null, 2) + "\n")), fixer, (run) => (fix = run));
@@ -1192,12 +1231,19 @@ async function landOne(root: string, config: Config, id: string, action: LandInp
     const files = conflictPaths(clash);
     throw new Error(`landing conflict${files.length ? ` in ${files.join(", ")}` : ""}, working tree untouched; discard it, or fix the overlap and delegate again`);
   }
-  await releaseDirectory(worktree.path); // release before the worktree is removed
-  removeWorktree(root, worktree);
-  save({ landed: true, changed: diff.changed });
+  // the change is in the working tree now: a folder Windows won't delete yet must not undo the landing's record (#22)
+  let cleanupError: string | undefined;
+  try {
+    await releaseDirectory(worktree.path); // release before the worktree is removed
+    removeWorktree(root, worktree);
+  } catch (err) {
+    cleanupError = (err as Error).message.replace(/\s+/g, " ");
+  }
+  save({ landed: true, changed: diff.changed, ...(cleanupError && { cleanupError }) });
   const add = diff.changed.reduce((n, c) => n + c.add, 0);
   const del = diff.changed.reduce((n, c) => n + c.del, 0);
-  return `OK ${id} applied files=${diff.changed.length} +${add}/-${del}`;
+  const note = cleanupError ? `\ncleanup error: ${cleanupError} (the change landed; only its worktree folder was left behind)` : "";
+  return `OK ${id} applied files=${diff.changed.length} +${add}/-${del}${note}`;
 }
 
 /** A job paused on a worker question. It lives only in this process, as does its paused session. */

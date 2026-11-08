@@ -180,6 +180,34 @@ test("with no OpenCode login, codex/ jobs still run; other delegates get NO_PROV
   expect(s.opencode.recorded.requests).toEqual([]);
 });
 
+test("a Codex capacity error never enters OpenCode retry or fallback recovery", async () => {
+  const s = await scenario([[{ fail: "upstream request failed: overloaded, try again" }]], { codex: true, logins: {} });
+  const text = await s.delegate({ task: "Add a.txt" });
+  expect(text).toMatch(/^FAIL /);
+  expect(text).toContain("upstream request failed: overloaded, try again");
+  expect(s.runs()).toHaveLength(1);
+  expect(s.opencode.recorded.requests).toEqual([]);
+});
+
+test("a Codex alias and its deferred batch repair keep the engine without an OpenCode login", async () => {
+  const check = "node -e \"const f=require('fs');process.exit(f.existsSync('a.txt')&&f.existsSync('b.txt')&&!f.existsSync('fixed.txt')?1:0)\"";
+  const s = await scenario([
+    [{ write: "a.txt", content: "a\n" }, { report: REPORT }],
+    [{ write: "b.txt", content: "b\n" }, { fail: "worker stopped" }],
+    [{ write: "fixed.txt", content: "fixed\n" }, { report: REPORT }],
+  ], { codex: true, logins: {}, config: { aliases: { cx: "codex/default" }, integration_cmd: check, limits: { max_parallel: 1 } } });
+  writeFileSync(join(s.repo.dir, "plan.md"), "# Batch\n## 1 a\nfiles: a.txt\ndo: add a.txt\ndone-when: done\n## 2 b\nfiles: b.txt\ndo: add b.txt\ndone-when: done\n");
+  const text = await s.delegate({ plan: "plan.md", steps: "1,2", model: "cx" });
+  expect(text).toMatch(/^BATCH .*integration=pending/);
+  const job = text.match(/^FAIL (j[0-9a-z]{4}) step=2 /m)![1];
+  const landed = await callText(s.server.client, "land", { job, action: "apply" });
+  expect(landed).toContain("integration=pass");
+  expect(readFileSync(join(s.repo.dir, "fixed.txt"), "utf8")).toBe("fixed\n");
+  expect(s.runs()).toHaveLength(3);
+  for (const run of s.runs()) expect(run.argv).toEqual(expect.arrayContaining(["-m", "gpt-user"]));
+  expect(s.opencode.recorded.requests).toEqual([]);
+});
+
 test("the turn cap kills the codex process and the job stops", async () => {
   const s = await scenario([[{ tools: 3 }, { sleep: 120_000 }], [{ text: "found nothing" }]], { codex: true, config: { limits: { max_turns: 2 } } });
   const started = Date.now();

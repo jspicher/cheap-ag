@@ -53,7 +53,7 @@ test("the MCP entry and every command run exactly this package version, so the p
 });
 
 test("skills: plan-writing for Claude; status, and user-only allow, clean and hook wrapping the CLI", () => {
-  expect(readdirSync(join(plugin, "skills")).sort()).toEqual(["allow", "clean", "hook", "plan-writing", "status"]);
+  expect(readdirSync(join(plugin, "skills")).sort()).toEqual(["allow", "clean", "hook", "model", "plan-writing", "provider", "status"]);
   const plan = skill("plan-writing");
   expect(plan.front["disable-model-invocation"]).toBeUndefined(); // Claude loads it when planning
   expect(plan.front.description).toMatch(/plan/i);
@@ -61,12 +61,17 @@ test("skills: plan-writing for Claude; status, and user-only allow, clean and ho
   for (const rule of ["Trust OK", "After a FAIL"]) expect(plan.body).not.toContain(rule); // the rules live in the server instructions only
 
   const pin = `npx -y cheap-agent@${npm}`;
+  const model = skill("model");
+  expect(model.front["disable-model-invocation"]).toBe("true");
+  expect(model.body).toContain(`!\`${pin} model --list\``);
+  expect(model.front["allowed-tools"]).toBe(`Bash(${pin} model) Bash(${pin} model *)`);
+  expect(model.body).toContain("For more models, exit Claude/Codex and run: npx cheap-agent model");
   const status = skill("status");
   expect(status.front["disable-model-invocation"]).toBeUndefined();
   expect(status.body).toContain(`!\`${pin} status\``);
   expect(status.front["allowed-tools"]).toBe(`Bash(${pin} status)`);
-  // Claude must never approve consent, delete worktrees or switch off its own edit guard: only the developer can invoke these
-  for (const [name, cmd] of [["allow", "allow"], ["clean", "clean"], ["hook", "hook"]]) {
+  // Claude must never approve consent, delete worktrees, switch off its own edit guard or switch provider: only the developer can invoke these
+  for (const [name, cmd] of [["allow", "allow"], ["clean", "clean"], ["hook", "hook"], ["provider", "provider"]]) {
     const s = skill(name);
     expect(s.front["disable-model-invocation"]).toBe("true");
     expect(s.body).toContain(`!\`${pin} ${cmd} $ARGUMENTS\``);
@@ -77,7 +82,7 @@ test("skills: plan-writing for Claude; status, and user-only allow, clean and ho
 
 test("skills work in Codex: user-only skills stay implicit-off, and every npx line has a manual fallback", () => {
   // Codex's equivalent of disable-model-invocation: true, so its model never starts these on its own
-  for (const name of ["allow", "clean", "hook"]) {
+  for (const name of ["allow", "clean", "hook", "model", "provider"]) {
     expect(readFileSync(join(plugin, "skills", name, "agents", "openai.yaml"), "utf8")).toContain("allow_implicit_invocation: false");
   }
   // Codex does not run the !`...` line, so the body must tell its model to run the command once

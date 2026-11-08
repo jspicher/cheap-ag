@@ -491,7 +491,10 @@ test.each([
   { model: "opencode-go/glm-5.3", runs: "glm-5.3" },
   { model: undefined, runs: "deepseek-v4.1-flash" }, // no picked model: the default route, as before
 ])("a fix job started by land apply runs on the batch's picked model ($model)", async ({ model, runs }) => {
-  const s = await scenario([{ id: "1", files: "a.txt" }, { id: "2", files: "b.txt" }], { "1": writes("a.txt"), "2": failsAfter("b.txt") }, INTEGRATION);
+  const s = await scenario([{ id: "1", files: "a.txt" }, { id: "2", files: "b.txt" }], { "1": writes("a.txt"), "2": failsAfter("b.txt") }, { ...INTEGRATION, models: { hard: "opencode-go/kimi-k3" } });
+  // Repair must retain the explicit pick even when the plan's difficulty would select another model.
+  const path = join(s.repo.dir, ".plan", "p.md");
+  if (model) writeFileSync(path, readFileSync(path, "utf8").replaceAll("done-when: done", "difficulty: hard\ndone-when: done"));
   s.fake.scriptFor(FIX, ...writes("fixed.txt"));
   const text = await s.call("delegate", { plan: ".plan/p.md", steps: "1,2", ...(model && { model }) });
   const batch = batchOf(text);

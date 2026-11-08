@@ -43,8 +43,8 @@ You implement the plan step marked >>> CURRENT STEP(S), in this repository, by e
 - Never touch .git, .env* files or lockfiles. Never commit.
 - If the step is ambiguous or conflicts with its dont:, ask with the question tool instead of guessing.
 - When a Source section is given (the user's request or the issue, verbatim), the step is someone's reading of it: check the step against the source before you start. Implement the step as written, but name every point where they disagree (a direction, an order, a value, an approach the source prefers) in finish's disagree. When the source names a preferred approach or links a fix, implement that one and say so in summary.
-- If the step fixes a bug or a wrong behaviour, prove it: first write a small test that reproduces the problem and run it to see it fail, then fix the code and run it again to see it pass. Write the test first, before reading widely. Before writing it, list every case the step or Source names or implies (each type, value, order or boundary mentioned; empty, zero, negative, infinite or missing inputs where they apply) and cover each listed case in the test; name any case you left out under missing. When the step names the exact change (the file and the code), make that change first, then write the test. Keep the test in the change, and run it with the same command the step's checks use (e.g. its test runner plus the test file or id).
-- The reproduction test asserts the exact values, order and types the source or step states or implies. "Does not crash" or "contains X" is not enough when the expected value is known.
+- If the step fixes a bug or a wrong behaviour, make the fix as soon as you know it, then write a small test that shows the problem and run it with the same command the step's checks use. Do not try to make the test fail yourself, and never undo the fix to check: the server runs your test against the original code after you finish. Before writing it, list every case the step or Source names or implies (each type, value, order or boundary mentioned; empty, zero, negative, infinite or missing inputs where they apply) and cover each listed case in the test; name any case you left out under missing. When the step names the exact change (the file and the code), make that change first, then write the test. Keep the test in the change, and run it with the same command the step's checks use (e.g. its test runner plus the test file or id).
+- Never remove or revert a fix because its test does not fail on the old code. The reproduction test asserts the exact values, order and types the source or step states or implies. "Does not crash" or "contains X" is not enough when the expected value is known.
 - A command denied by policy is not allowed in this sandbox: a second denial of the same command means stop, do not try variants (quoting, cd, env, other runners); finish and name it under missing.
 - When done, call the finish tool exactly once, last: summary (at most 160 chars), risks, review (path:start-end, max 5), missing, repro (the command that runs your reproduction test, "none: <why>" if you could not reproduce it, "n/a" if the step is not a fix), disagree (where the step and the source disagree, or "none").
 - If you cannot call finish, end your last message with a fenced cheapag-result block holding the same fields.
@@ -149,16 +149,19 @@ function opencodeConfig(provider: Provider, route: Route) {
       models: Object.fromEntries(routeModels(route).map((m) => [m.id, { name: m.id, ...(models[m.id] ?? {}) }])),
     });
   }
-  // a local server is declared the same way, at the user's base URL. Its key, if it needs one, is a {file:} reference
+  // a custom endpoint is declared the same way, at the user's base URL. Its key, if it needs one, is a {file:} or {env:} reference
   // OpenCode resolves itself, so the key is never in this config or in Cheap Agent's memory
   if (provider.provider === "local") {
     const local = localServer()!;
     const limit = local.context ? { limit: { context: local.context, output: local.output ?? Math.min(32_768, Math.floor(local.context / 4)) } } : {};
+    const apiKey = local.api_key_file ? `{file:${local.api_key_file}}` : local.api_key_env ? `{env:${local.api_key_env}}` : undefined;
+    // OpenCode prices a model per million tokens; that cost feeds the spend ledger and the job cost cap
+    const cost = local.price ? { cost: { input: local.price.input, output: local.price.output } } : {};
     Object.assign(providerConfig, {
       npm: "@ai-sdk/openai-compatible",
-      name: "Local server",
-      options: { baseURL: local.base_url, ...(local.api_key_file && { apiKey: `{file:${local.api_key_file}}` }) },
-      models: Object.fromEntries(routeModels(route).map((m) => [m.id, { name: m.id, ...limit, ...(models[m.id] ?? {}) }])),
+      name: "Custom endpoint",
+      options: { baseURL: local.base_url, ...(apiKey && { apiKey }) },
+      models: Object.fromEntries(routeModels(route).map((m) => [m.id, { name: m.id, ...limit, ...cost, ...(models[m.id] ?? {}) }])),
     });
   }
   const config = {
