@@ -1,3 +1,4 @@
+import { CLI } from "../src/cli-command.js";
 import { mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -172,8 +173,8 @@ test("with no OpenCode login, codex/ jobs still run; other delegates get NO_PROV
   const job = text.match(/^OK (j[0-9a-z]{4})/)![1];
   expect(JSON.parse(readFileSync(join(s.repo.dir, ".cheapag", "jobs", job, "result.json"), "utf8")).provider).toBe("codex");
   expect(await callText(s.server.client, "jobs", { action: "list" })).toContain(job);
-  expect(await callText(s.server.client, "delegate", { task: "Add b.txt" })).toBe("FAIL reason: no worker provider; run npx cheap-agent login");
-  expect(await callText(s.server.client, "research", { question: "where?" })).toBe("FAIL reason: no worker provider; run npx cheap-agent login");
+  expect(await callText(s.server.client, "delegate", { task: "Add b.txt" })).toBe(`FAIL reason: no worker provider; run ${CLI} login`);
+  expect(await callText(s.server.client, "research", { question: "where?" })).toBe(`FAIL reason: no worker provider; run ${CLI} login`);
   const ping = await callText(s.server.client, "ping");
   expect(ping).toMatch(/^OK cheapag \S+ provider=none codex=allowed/);
   expect(ping).not.toContain("opencode=");

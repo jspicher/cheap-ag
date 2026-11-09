@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
-import { dirname, isAbsolute, join, sep } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { loadConfig, localServer, privateHost, userConfigFile, type LocalServer } from "./config.js";
 import { detectProvider, LOGIN_COMMAND as LOGIN, PROVIDERS, providerLabel as label, redact, savedProviders, type Provider } from "./credentials.js";
@@ -12,13 +12,12 @@ import { runCli } from "./platform.js";
 import { select } from "./prompt.js";
 import { installPlugin, stableNode } from "./install.js";
 import { effectiveModels, fullRoute, modelName, presetOf, PRESET_NAMES, PRESETS, type ModelsConfig, type Preset } from "./routing.js";
-import { baseVersion } from "./version.js";
 import { runSession } from "./worker.js";
 
 /**
  * `cheapag login`: the only setup (ADR-0004). Picks a provider, lets the bundled OpenCode's own login take the key
  * (hidden input, saved in OpenCode's store; Cheap Agent never sees it), live-checks it, then offers to register
- * the server with Claude Code at user scope and install the plugin (ticket 31). `npx cheap-agent` in a terminal runs it too.
+ * the server with Claude Code at user scope and installs the generated fork plugin.
  */
 
 const { version } = createRequire(import.meta.url)("../package.json") as { version: string };
@@ -42,7 +41,7 @@ export async function login(args: string[] = [], { setup = false }: { setup?: bo
     out(`✗ "${flag}" is not a preset; use one of ${CHOICES.join(", ")}; nothing changed`);
     return 1;
   }
-  // `npx cheap-agent` with a login already saved is just an update: no questions, no key prompt
+  // Setup with a login already saved is just an update: no questions, no key prompt.
   if (setup && flag === undefined) {
     const saved = detectProvider();
     if (saved) {
@@ -448,14 +447,14 @@ function sameCommand(existing: string[] | undefined, current: string[]) {
 /** The last thing setup says: how to start. */
 function finish(out: (line?: string) => void, plugin: boolean) {
   out(plugin
-    ? "\nDone. Open a new Claude Code session in your project and run /cheapag:allow once there; then ask for changes as usual."
+    ? "\nDone. Open a new Claude Code session in your project and run /cheapag:allow once there; then explicitly ask to use Cheap Agent for the current task."
     : "\nThe server is set up; add the plugin with the commands above, then open a new Claude Code session.");
 }
 
-/** How Claude Code should start this installed package: npx when run from npx's cache, else this exact file. */
+/** Register this exact build, including when setup was launched from an npm cache. */
 function serverCommand() {
   const entry = realpathSync(process.argv[1]);
-  return entry.split(sep).includes("_npx") ? ["npx", "-y", `cheap-agent@${baseVersion(version)}`] : [stableNode(), entry];
+  return [stableNode(), entry];
 }
 
 // double quotes on Windows: cmd and PowerShell don't treat single quotes as quoting

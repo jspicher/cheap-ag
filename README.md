@@ -158,6 +158,6 @@ node test/packed-smoke.mjs
 
 The permission and worker-isolation tests run the real bundled OpenCode against a fake local model. Live provider calls are a separate check.
 
-Update this fork from its Git repository, rebuild, regenerate the installed plugin, and refresh the host's cached plugin. Do not use `npx cheap-agent@latest` to update this fork: that selects upstream. Restart into a new conversation after installation changes. Updating source or `dist/` alone does not refresh cached skill files or an already-running MCP server.
+Update this fork from its Git repository, rebuild, regenerate the installed plugin, and refresh the host's cached plugin. Do not use `npx cheap-agent@latest` to update this fork: that selects upstream. Runtime hints print an absolute command for this build; generated skills use the installed launcher. If the runtime disappears, the launcher reports an error instead of substituting upstream. Restart into a new conversation after installation changes. Updating source or `dist/` alone does not refresh cached skill files or an already-running MCP server.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md), [fork provenance](docs/fork-provenance.md), and the [MIT license](LICENSE). Upstream demos and benchmark assets remain as historical material; they are not measurements of this fork.

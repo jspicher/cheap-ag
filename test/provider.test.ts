@@ -1,3 +1,4 @@
+import { CLI } from "../src/cli-command.js";
 import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -40,7 +41,7 @@ test("with no argument it lists the providers set up, marks the one in use, and 
   const r = await run([]);
   expect(r.code, r.stderr).toBe(0);
   expect(r.out).toContain("Providers set up:\n  opencode-go  OpenCode Go  (in use)\n  openrouter  OpenRouter\n");
-  expect(r.out).toContain("Not set up: DeepSeek, Command Code, OpenCode Zen, Custom endpoint. Add one with npx cheap-agent login");
+  expect(r.out).toContain(`Not set up: DeepSeek, Command Code, OpenCode Zen, Custom endpoint. Add one with ${CLI} login`);
 }, slow(30_000));
 
 test("switching moves the repo's consent with its mode, shows what it covers, live-checks, and the choice sticks", async () => {
@@ -73,7 +74,7 @@ test("a failed live check puts the previous provider and consent back", async ()
 test("a provider with no saved key points to login; an explicit model consent is not carried; same provider and bad names are said", async () => {
   const missing = await run(["deepseek"]);
   expect(missing.code).toBe(1);
-  expect(missing.out).toContain("✗ DeepSeek is not set up yet; run npx cheap-agent login and pick it");
+  expect(missing.out).toContain(`✗ DeepSeek is not set up yet; run ${CLI} login and pick it`);
   expect(missing.config).toBeUndefined();
 
   const models = await run(["OpenRouter"], { consent: { mode: "models", models: ["opencode-go/kimi-k3"], provider: "opencode-go", approvedAt: "2026-11-01T00:00:00Z" } });

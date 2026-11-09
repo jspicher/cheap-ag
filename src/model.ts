@@ -1,3 +1,4 @@
+import { CLI } from "./cli-command.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,7 +12,7 @@ import { effectiveModels, fullRoute, PRESETS, ROLES, type WorkerModel } from "./
 import { projectRoot } from "./workspace.js";
 
 const USAGE = "usage: cheapag model [--list | --main <id> [--effort <e>] [--fallback <id|none>] [--fallback-effort <e>]]";
-export const MORE_MODELS = "For more models, exit Claude/Codex and run: npx cheap-agent model";
+export const MORE_MODELS = `For more models, run in a terminal: ${CLI} model`;
 const SHOWN = 4;
 
 const effort = (e?: string) => `effort ${e ?? "default"}`;
@@ -97,7 +98,7 @@ function save(provider: Provider, models: CatalogModel[], flags: Required<Pick2>
   const label = providerLabel(provider.provider);
   const check = (id: string, wanted?: string) => {
     const found = models.find((m) => m.id === bare(provider, id));
-    if (!found) return out(`✗ ${id} is not a tool-calling model on ${label}; run npx cheap-agent model --list`), undefined;
+    if (!found) return out(`✗ ${id} is not a tool-calling model on ${label}; run ${CLI} model --list`), undefined;
     if (wanted !== undefined && !found.efforts.includes(wanted)) return out(`✗ ${id} has no effort ${wanted}; it has: ${list(found.efforts)}`), undefined;
     return found;
   };

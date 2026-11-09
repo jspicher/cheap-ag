@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 export const { version } = createRequire(import.meta.url)("../package.json") as { version: string };
 
 /**
- * The published npm version a build is based on: `version` without a fork's `-js.N` suffix. Every npx/npm package
- * reference uses it, since a fork version does not exist on npm; the update check compares on it too.
+ * The upstream version a build is based on, without its `-js.N` suffix. Used for the opt-in
+ * upstream update comparison and recognizing legacy plugin templates, never to replace this fork.
  */
 export const baseVersion = (v: string) => v.replace(/-js\.\d+$/, "");

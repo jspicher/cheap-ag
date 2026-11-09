@@ -1,3 +1,4 @@
+import { CLI } from "../src/cli-command.js";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { createRequire } from "node:module";
 import { callText, startServer } from "./harness.js";
@@ -28,7 +29,7 @@ test("codex host gets Codex instructions, no Claude-only rules, same server name
   try {
     expect(codex.client.getServerVersion()).toMatchObject({ name: "cheapag", version });
     const instructions = codex.client.getInstructions()!;
-    expect(instructions).toContain("npx cheap-agent allow");
+    expect(instructions).toContain(`${CLI} allow`);
     expect(instructions).toContain("ask the user in chat");
     expect(instructions).toContain("seconds=15");
     expect(instructions).toContain("explicitly requests");
@@ -51,7 +52,7 @@ test("delegate and research load upfront in Claude Code, with descriptions that 
 
 test("ping with no worker credentials is up, says provider=none and how to log in, and boots no OpenCode", async () => {
   expect(await callText(server.client, "ping")).toMatch(
-    /^OK cheapag \S+ provider=none; run npx cheap-agent login for OpenCode workers$/,
+    new RegExp(`^OK cheapag \\S+ provider=none; run ${CLI.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} login for OpenCode workers$`),
   );
 });
 

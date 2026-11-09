@@ -13,7 +13,7 @@ Thanks for wanting to help! Bug fixes, new providers, docs, and benchmark runs a
 You need Node.js 20.11+ and git.
 
 ```bash
-git clone https://github.com/muaaz9329/cheap-ag.git
+git clone https://github.com/jspicher/cheap-ag.git
 ```
 
 ```bash

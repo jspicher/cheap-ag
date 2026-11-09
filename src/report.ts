@@ -272,9 +272,9 @@ export function renderBatch(b: BatchRecord, jobs: JobRecord[], fix?: JobRecord) 
   return [head.map(fit).join("\n"), chunks.join("\n\n"), full, next && fit(`next: ${next}`)].filter(Boolean).join("\n");
 }
 
-/** D5 CONSENT: no job is created. */
+/** D5 CONSENT: no job is created. Approval commands must remain copyable at long install paths. */
 export const renderConsent = (c: ConsentRecord) =>
-  [`CONSENT repo=${c.repo}`, `send: ${c.send}`, `retention: ${c.retention}`, `approve: ${c.approve}`].map(fit).join("\n");
+  [...[`CONSENT repo=${c.repo}`, `send: ${c.send}`, `retention: ${c.retention}`].map(fit), `approve: ${oneLine(c.approve)}`].join("\n");
 
 const oneLine = (s: string) => s.trim().replace(/\s*\n\s*/g, " ");
 const clip = (s: string, max: number) => (s.length > max ? `${s.slice(0, max - 1)}…` : s);

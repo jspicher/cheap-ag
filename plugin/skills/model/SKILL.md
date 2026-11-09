@@ -14,8 +14,8 @@ The developer ran this model command themselves; its output is above. Set the wo
 3. Ask one question for the fallback model (used on a rate limit): `none` first, then the suggestions. If it lists efforts, ask for its effort too.
 4. Run `npx -y cheap-agent@1.3.2 model --main <id> [--effort <e>] [--fallback <id|none>] [--fallback-effort <e>]` once, leaving out the flags for `default` efforts, and report its last line.
 
-Always show the user this line, as is: `For more models, exit Claude/Codex and run: npx cheap-agent model`
+Always show the user this line, as is: `For more models, run in a terminal: npx -y cheap-agent@1.3.2 model`
 
-Only because the user invoked this skill: If no output appears above (Codex): run `npx -y cheap-agent@1.3.2 model --list` yourself once, exactly as written. It needs network for npx; ask for that if the sandbox blocks it. Do not change the models in any other way.
+Only because the user invoked this skill: If no output appears above (Codex): run `npx -y cheap-agent@1.3.2 model --list` yourself once, exactly as written. Do not change the models in any other way.
 
 Use this skill only when explicitly requested by the user for the current task. Installation and repository consent never authorize automatic invocation.

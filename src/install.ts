@@ -9,11 +9,11 @@ import { baseVersion, version } from "./version.js";
  * The Claude Code plugin (hooks and slash commands), installed by setup (ticket 31). It is generated from this package's
  * own plugin/ so it always matches the installed version, needs no public marketplace, and leaves out .mcp.json (setup
  * registers the server at user scope); Codex's codex.mcp.json starts this install through the launcher. Its hooks run on every tool call once a job has run, so they call a launcher that
- * starts this install with node (~0.1 s) instead of npx (~0.4 s), falling back to npx if this install is gone.
+ * starts this install with node and reports a missing runtime instead of substituting upstream npm.
  */
 
 const PLUGIN_SRC = fileURLToPath(new URL("../plugin", import.meta.url));
-// the published version: a fork build's own version is not on npm
+// Legacy source-plugin command templates; generation replaces every pin with this fork's launcher.
 const NPM_VERSION = baseVersion(version);
 const NPX = `npx -y cheap-agent@${NPM_VERSION}`;
 export const MARKETPLACE = "cheapag";
@@ -26,22 +26,19 @@ export const installPaths = () => {
 
 /**
  * The launcher every hook and command runs as `node <launcher> <args>`. Windows has no /bin/sh, so one CommonJS file
- * runs on every platform: it gates the guard hook (exit 0 unless the repo opted in), then runs this install when it is
- * still there, else the pinned npx.
+ * runs on every platform and always targets this install.
  */
-const launcherScript = (entry: string) => `// cheapag: runs this install, else the fallback ${NPX}
+const launcherScript = (entry: string) => `// cheapag: runs this install only; never substitutes upstream npm
 "use strict";
-const { execFileSync, spawnSync } = require("node:child_process");
 const { existsSync } = require("node:fs");
-const { join } = require("node:path");
 const { pathToFileURL } = require("node:url");
 const entry = ${JSON.stringify(entry)};
 if (existsSync(entry)) {
   process.argv[1] = entry;
   import(pathToFileURL(entry).href);
 } else {
-  const r = spawnSync("npx", ["-y", "cheap-agent@${NPM_VERSION}", ...process.argv.slice(2)], { stdio: "inherit", shell: process.platform === "win32" });
-  process.exit(r.status ?? 1);
+  console.error("Cheap Agent fork runtime is missing: " + entry + ". Restore/rebuild this checkout and rerun its setup; do not install upstream npm as a replacement.");
+  process.exit(1);
 }
 `;
 
@@ -64,7 +61,10 @@ export function writePlugin(entry: string, _node: string, platform: NodeJS.Platf
   mcp.mcpServers.cheapag.args = [platform === "win32" ? normalisePath(launcher) : launcher, "codex"];
   writeFileSync(codexMcp, JSON.stringify(mcp, null, 2) + "\n");
   const skills = readdirSync(join(plugin, "skills")).map((s) => join(plugin, "skills", s, "SKILL.md"));
-  for (const f of skills) writeFileSync(f, readFileSync(f, "utf8").replaceAll(NPX, ref));
+  // Rewrite executable templates AND prose hints; an unpinned hint must not escape to upstream.
+  for (const f of [...skills, join(plugin, "README.md")]) {
+    writeFileSync(f, readFileSync(f, "utf8").replaceAll(NPX, ref).replaceAll("npx cheap-agent", ref));
+  }
   const hooksFile = join(plugin, "hooks", "hooks.json");
   if (platform === "win32") {
     // rewrite the commands as JSON: a raw replace would put unescaped double quotes inside the strings; no sh prefix, since the launcher gates and exits 0

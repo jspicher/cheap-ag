@@ -1,3 +1,4 @@
+import { CLI } from "../src/cli-command.js";
 import { execFile, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import { promisify } from "node:util";
@@ -5,7 +6,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, wr
 import { dirname, join } from "node:path";
 import { expect, onTestFinished, test } from "vitest";
 import { installPaths, writePlugin } from "../src/install.js";
-import { baseVersion, version } from "../src/version.js";
+import { version } from "../src/version.js";
 import { normalisePath } from "../src/platform.js";
 import { PRESETS } from "../src/routing.js";
 import { startFakeOpencode, type Action } from "./fake-opencode.js";
@@ -243,10 +244,11 @@ tty("the plugin is generated from the package: hooks and commands call the launc
   expect(readFileSync(join(plugin, "skills", "allow", "SKILL.md"), "utf8")).toContain(`allowed-tools: Bash(node '${r.launcher}' allow) Bash(node '${r.launcher}' allow *)`);
   expect(existsSync(join(plugin, ".mcp.json"))).toBe(false); // the server is registered at user scope instead
   expect(JSON.parse(readFileSync(join(r.marketplace, ".claude-plugin", "marketplace.json"), "utf8"))).toMatchObject({ name: "cheapag", plugins: [{ name: "cheapag", source: "./cheapag" }] });
-  // the launcher runs this install, falling back to the pinned npm version
+  // The launcher runs this install only, with an actionable error if it disappears.
   const launcher = readFileSync(r.launcher, "utf8");
   expect(launcher).toContain(JSON.stringify(serverEntry));
-  expect(launcher).toMatch(/npx -y cheap-agent@\d+\.\d+\.\d+/);
+  expect(launcher).not.toContain('spawnSync("npx"');
+  expect(launcher).toContain("Cheap Agent fork runtime is missing");
   expect(launcher).not.toContain("rev-parse"); // target resolution belongs to the hook, not the launcher cwd
   expect(launcher).toContain("pathToFileURL");
   const context = await promisify(execFile)(process.execPath, [r.launcher, "hook", "context"], { encoding: "utf8" });
@@ -283,7 +285,7 @@ tty("npx cheap-agent with a saved provider updates without asking and registers 
   expect(r.output).toContain("✓ Updated the cheapag plugin to ");
   expect(r.output).not.toContain("Added the cheapag plugin");
   expect(r.output).not.toContain("run /cheapag:allow");
-  expect(r.output).toContain("Restart Claude Code to load it. To change provider or models: npx cheap-agent login");
+  expect(r.output).toContain(`Restart Claude Code to load it. To change provider or models: ${CLI} login`);
   expect(r.claudeCalls).toEqual(["mcp get cheapag", ...PLUGIN(r.marketplace)]);
 }, slow(90_000));
 
@@ -302,14 +304,14 @@ tty("without the claude CLI, login prints the command to run", async () => {
 tty("a failed live check explains the fix, keeps the saved login, and does not offer registration", async () => {
   const r = await runLogin({ claude: "unregistered", check: [{ error: { name: "APIError", message: "401 Missing Authentication header" } }] });
   expect(r.exit).toBe("EXIT 1");
-  expect(r.output).toContain("✗ the key was rejected (401 Missing Authentication header); run npx cheap-agent login again with the right key");
+  expect(r.output).toContain(`✗ the key was rejected (401 Missing Authentication header); run ${CLI} login again with the right key`);
   expect(r.saved).toEqual(["openrouter"]);
   expect(r.claudeCalls).toEqual([]);
 }, slow(90_000));
 
 tty.each([
-  ["no credit", "402 Insufficient credits", "✗ the account has no credit (402 Insufficient credits); top it up, then run npx cheap-agent login again"],
-  ["an unavailable model", "404 No endpoints found for deepseek/deepseek-v4.1-flash", "✗ openrouter/deepseek/deepseek-v4.1-flash is unavailable to this account (404 No endpoints found for deepseek/deepseek-v4.1-flash); run npx cheap-agent login and pick another provider"],
+  ["no credit", "402 Insufficient credits", `✗ the account has no credit (402 Insufficient credits); top it up, then run ${CLI} login again`],
+  ["an unavailable model", "404 No endpoints found for deepseek/deepseek-v4.1-flash", `✗ openrouter/deepseek/deepseek-v4.1-flash is unavailable to this account (404 No endpoints found for deepseek/deepseek-v4.1-flash); run ${CLI} login and pick another provider`],
 ] as const)("a live check failing on %s says why and what to do", async (_, message, expected) => {
   const r = await runLogin({ claude: "unregistered", check: [{ error: { name: "APIError", message } }] });
   expect(r.exit).toBe("EXIT 1");
@@ -328,7 +330,7 @@ test("login refuses a non-interactive stdin instead of hanging", async () => {
   const { env } = hermeticHome();
   const r = await promisify(execFile)(process.execPath, [serverEntry, "login"], { env, encoding: "utf8" }).catch((e) => e);
   expect(r.code).toBe(1);
-  expect(r.stdout).toBe("✗ npx cheap-agent login needs an interactive terminal (the key is typed into a hidden prompt)\n");
+  expect(r.stdout).toBe(`✗ ${CLI} login needs an interactive terminal (the key is typed into a hidden prompt)\n`);
 });
 
 tty("re-running login adds a provider and switches to it; the earlier one stays saved for cheapag provider", async () => {
@@ -429,10 +431,37 @@ test("writePlugin on win32 emits double-quoted, forward-slash commands with no s
   expect(codex.command).toBe("node");
   expect(codex.args).toEqual([normalisePath(launcher), "codex"]); // this install, not the pinned npx
   expect(codex.omit_tools_from).toEqual(["code_mode", "deferred"]);
-  // the launcher's npx fallback names the published base version: a fork build's own (x.y.z-js.N) is not on npm
+  // A missing fork runtime must never silently substitute the upstream package.
   const script = readFileSync(launcher, "utf8");
-  expect(script).toContain(`["-y", "cheap-agent@${baseVersion(version)}", ...process.argv.slice(2)]`);
-  expect(script).not.toContain(`cheap-agent@${version}"`);
+  expect(script).not.toContain("cheap-agent@");
+  expect(script).toContain("Cheap Agent fork runtime is missing");
+  for (const name of ["allow", "clean", "hook", "model", "provider", "status", "plan-writing"]) {
+    expect(readFileSync(join(marketplace, "cheapag", "skills", name, "SKILL.md"), "utf8")).not.toContain("npx");
+  }
+  const model = readFileSync(join(marketplace, "cheapag", "skills", "model", "SKILL.md"), "utf8");
+  expect(model).toContain(`For more models, run in a terminal: ${ref} model`);
+  expect(readFileSync(join(marketplace, "cheapag", "README.md"), "utf8")).not.toContain("npx");
+});
+
+test("a missing fork runtime fails clearly without running npm", () => {
+  const { home, env } = hermeticHome();
+  onTestFinished(() => rmSync(home, { recursive: true, force: true }));
+  const prev = process.env.XDG_CONFIG_HOME;
+  process.env.XDG_CONFIG_HOME = env.XDG_CONFIG_HOME;
+  let launcher: string;
+  try {
+    launcher = installPaths().launcher;
+    writePlugin(join(home, "missing-build", "dist", "index.js"), process.execPath);
+  } finally {
+    if (prev === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = prev;
+  }
+  // No PATH executables: any npm fallback would fail differently (or hang). Only Node is invoked.
+  const result = spawnSync(process.execPath, [launcher, "model"], { cwd: home, env: { ...env, PATH: "" }, encoding: "utf8", timeout: 5000 });
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain("Cheap Agent fork runtime is missing");
+  expect(result.stderr).toContain("Restore/rebuild this checkout");
+  expect(result.stdout).toBe("");
 });
 
 test("the launcher gates the guard hook itself: nothing without the repo flag, a deny decision with it", () => {

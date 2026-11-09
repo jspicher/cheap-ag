@@ -1,3 +1,4 @@
+import { CLI } from "./cli-command.js";
 import { endpointFingerprint } from "./endpoint.js";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
@@ -89,7 +90,7 @@ export function codexGate(root: string, m: WorkerModel): { block: string } | { r
         repo: basename(root),
         send: `code from this repo → OpenAI via the Codex CLI (your ChatGPT plan or API key): ${modelName(m)}`,
         retention: "per your OpenAI account's data controls; Cheap Agent runs Codex without your Codex config, MCP servers or hooks",
-        approve: "ask the user to run npx cheap-agent allow --codex in a terminal in this repo (or /cheapag:allow --codex); never approve yourself",
+        approve: `ask the user to run ${CLI} allow --codex in a terminal in this repo (or /cheapag:allow --codex); never approve yourself`,
       }),
     };
   }
@@ -265,10 +266,10 @@ function consentBlock(root: string, provider: Provider["provider"], full: Route)
     repo: basename(root),
     send: `code from this repo → ${local ? `custom endpoint at ${local.base_url}` : providerLabel(provider)}: ${ids}`,
     retention: (readConsent(root) && endpointMoved(readConsent(root)!) ? "Destination changed or legacy endpoint consent: renew consent. " : "") + retentionLine,
-    // the caller passed the root, so "this root" names it; a path here would push the line past the 200-char cap
+    // The caller passed the root, so "this root" names it. Approval commands are never elided.
     approve: sessionRepo(root)
-      ? "ask the user to run /cheapag:allow in Claude Code, or npx cheap-agent allow in a terminal (Codex); add --zdr-only to limit it to zero-retention models, or --models a,b; never approve yourself"
-      : "ask the user to run npx cheap-agent allow in a terminal in this root (/cheapag:allow approves the session's repo); add --zdr-only or --models a,b to narrow it; never approve yourself",
+      ? `ask the user to run /cheapag:allow in Claude Code, or ${CLI} allow in a terminal (Codex); add --zdr-only to limit it to zero-retention models, or --models a,b; never approve yourself`
+      : `ask the user to run ${CLI} allow in a terminal in this root (/cheapag:allow approves the session's repo); add --zdr-only or --models a,b to narrow it; never approve yourself`,
   });
 }
 

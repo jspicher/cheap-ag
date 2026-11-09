@@ -1,3 +1,4 @@
+import { CLI } from "../src/cli-command.js";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -73,7 +74,7 @@ test("a root nobody allowed gets CONSENT, and no job starts there or in the cwd"
   const text = await callText(server.client, "delegate", { task: "Add src/x.ts", root: other.dir });
   expect(text).toMatch(new RegExp(`^CONSENT repo=${basename(other.dir)}`));
   // /cheapag:allow would approve the session's repo, so the block points at a terminal in the root instead
-  expect(text.split("\n").at(-1)).toBe("approve: ask the user to run npx cheap-agent allow in a terminal in this root (/cheapag:allow approves the session's repo); add --zdr-only or --models a,b to narrow it; never approve yourself");
+  expect(text.split("\n").at(-1)).toBe(`approve: ask the user to run ${CLI} allow in a terminal in this root (/cheapag:allow approves the session's repo); add --zdr-only or --models a,b to narrow it; never approve yourself`);
   expect(fake.recorded.prompts).toHaveLength(0);
   expect(existsSync(join(other.dir, ".cheapag", "jobs"))).toBe(false);
   expect(existsSync(join(here.dir, ".cheapag", "jobs"))).toBe(false);

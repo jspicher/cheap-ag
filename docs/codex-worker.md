@@ -1,5 +1,7 @@
 # Codex worker engine
 
+CLI examples below run from the built fork checkout. From another directory, use its absolute `dist/index.js` path or the generated `~/.config/cheapag/bin/cheapag.cjs` launcher. Runtime hints print an absolute command for the executing build.
+
 A second worker engine next to OpenCode: the OpenAI Codex CLI (`codex exec`), picked per call with `model`.
 
 ## Selecting it
@@ -29,7 +31,7 @@ Code goes to OpenAI, a different recipient from the OpenCode provider, so it nee
 - `allow --codex` does not need an OpenCode provider consent, and does not grant one. A file holding only `engines`
   reads as "no OpenCode consent" (the base record's validation is unchanged).
 - A codex model without the entry gets a CONSENT block: code from this repo → OpenAI via the Codex CLI (your ChatGPT
-  plan or API key); retention: per your OpenAI account's data controls; approve: `npx cheap-agent allow --codex`.
+  plan or API key); retention: per your OpenAI account's data controls; approve: `node dist/index.js allow --codex`.
 - Revoking: delete the `engines` key (or `.cheapag/consent.json`). No `--no-codex` flag in v1.
 
 ## Without an OpenCode login
@@ -37,13 +39,13 @@ Code goes to OpenAI, a different recipient from the OpenCode provider, so it nee
 Codex needs no OpenCode provider, so the server runs without one:
 
 - `delegate` with a `codex/` model runs as usual (given `allow --codex`); any other `delegate`, and every `research`,
-  answers `FAIL reason: no worker provider; run npx cheap-agent login`.
-- `ping` answers `OK cheapag <version> provider=none[ codex=allowed][ root=…]; run npx cheap-agent login for OpenCode
+  answers `FAIL reason: no worker provider; run node dist/index.js login`.
+- `ping` answers `OK cheapag <version> provider=none[ codex=allowed][ root=…]; run node dist/index.js login for OpenCode
   workers` and boots no OpenCode.
 - `jobs`, `reply` and `land` need no login: they act on jobs already started. A batch's integration repair keeps its
   explicit model and engine, including when `land` starts the repair later. Codex repairs need only the Codex opt-in.
 - A Codex job's record says `provider: "codex"` (also when an OpenCode provider is logged in): its code went to OpenAI.
-- `cheapag status` already prints `provider=none (run npx cheap-agent login)` and the `codex:` line.
+- `cheapag status` already prints `provider=none (run node dist/index.js login)` and the `codex:` line.
 
 ## Running a job: Session on `codex exec`
 

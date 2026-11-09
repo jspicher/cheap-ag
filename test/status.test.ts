@@ -1,3 +1,4 @@
+import { CLI } from "../src/cli-command.js";
 import { execFileSync, spawnSync } from "node:child_process";
 import { closeSync, ftruncateSync, mkdirSync, openSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -91,7 +92,7 @@ test("cheapag status on opencode-go keeps consent valid after a preset change (t
 
 test("cheapag status with no login, no jobs and no spend; outside a repository; bad arguments", () => {
   const { repo, env, status } = setup();
-  expect(status()).toBe(`cheapag ${version} provider=none (run npx cheap-agent login)\nconsent: not given; run /cheapag:allow\nstorage: 0.0 KB in .cheapag (0 job folders, 0 worktrees)\nrunning: none\nrecent: none\nspend: none tracked in the last 30 days\n`);
+  expect(status()).toBe(`cheapag ${version} provider=none (run ${CLI} login)\nconsent: not given; run /cheapag:allow\nstorage: 0.0 KB in .cheapag (0 job folders, 0 worktrees)\nrunning: none\nrecent: none\nspend: none tracked in the last 30 days\n`);
   const outside = join(repo.dir, ".git"); // inside .git, rev-parse --show-toplevel fails
   expect(() => status(outside)).toThrow();
   expect(execFileSync(process.execPath, [serverEntry, "status", "--repo", repo.dir], { cwd: outside, env, encoding: "utf8" })).toContain("cheapag");
@@ -105,7 +106,7 @@ test("cheapag status shows the size of .cheapag and points to clean above 1GB", 
   mkdirSync(join(jobs, "jbig1"), { recursive: true });
   writeFileSync(join(jobs, "jbig1", "events.jsonl"), Buffer.alloc(2 * 1024 * 1024));
   expect(status()).toContain("storage: 2.0 MB in .cheapag (1 job folders, 0 worktrees)");
-  expect(status()).not.toContain("run: npx cheap-agent clean");
+  expect(status()).not.toContain(`run: ${CLI} clean`);
 
   const trees = join(repo.dir, ".cheapag", "worktrees");
   mkdirSync(join(trees, "jbig1"), { recursive: true });
@@ -113,7 +114,7 @@ test("cheapag status shows the size of .cheapag and points to clean above 1GB", 
   ftruncateSync(fd, 2 * 1024 * 1024 * 1024);
   closeSync(fd);
   expect(status().split("\n").find((line) => line.startsWith("storage: ")))
-    .toMatch(/^storage: [\d.]+ GB in \.cheapag \(1 job folders, 1 worktrees\) · run: npx cheap-agent clean$/);
+    .toContain(` GB in .cheapag (1 job folders, 1 worktrees) · run: ${CLI} clean`);
 });
 
 test("cheapag status shows the prefix of this repo's last Claude Code session, from its transcript", () => {

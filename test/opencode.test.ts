@@ -1,3 +1,4 @@
+import { CLI } from "../src/cli-command.js";
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -70,7 +71,7 @@ test.each([
   ["env keys without a login are ignored", {}, null],
 ] as const)("credentials from saved logins only: %s", async (_, logins, expected) => {
   const text = await pingWith({ OPENCODE_GO_API_KEY: "g", OPENROUTER_API_KEY: "o", DEEPSEEK_API_KEY: "d", CHEAPAG_OPENCODE_URL: await fakeHealth(PIN) }, logins);
-  expect(text).toBe(expected ? `OK cheapag ${pkg.version} opencode=${PIN} ${expected}` : `OK cheapag ${pkg.version} provider=none; run npx cheap-agent login for OpenCode workers`);
+  expect(text).toBe(expected ? `OK cheapag ${pkg.version} opencode=${PIN} ${expected}` : `OK cheapag ${pkg.version} provider=none; run ${CLI} login for OpenCode workers`);
 });
 
 test("ping names the preset the user's config picks, or custom when it matches none", async () => {

@@ -65,7 +65,7 @@ test("skills: plan-writing for Claude; status, and user-only allow, clean and ho
   expect(model.front["disable-model-invocation"]).toBe("true");
   expect(model.body).toContain(`!\`${pin} model --list\``);
   expect(model.front["allowed-tools"]).toBe(`Bash(${pin} model) Bash(${pin} model *)`);
-  expect(model.body).toContain("For more models, exit Claude/Codex and run: npx cheap-agent model");
+  expect(model.body).toContain(`For more models, run in a terminal: ${pin} model`);
   const status = skill("status");
   expect(status.front["disable-model-invocation"]).toBe("true");
   expect(status.body).toContain(`!\`${pin} status\``);

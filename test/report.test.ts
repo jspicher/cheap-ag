@@ -9,6 +9,10 @@ const job = (r: Partial<JobRecord> & Pick<JobRecord, "job" | "status">): JobReco
   usage: { turns: 0, costUsd: 0 }, selfFix: 0, models: { requested: FLASH, final: FLASH, escalated: false }, ...r,
 });
 const block = (...lines: string[]) => lines.join("\n");
+test("consent preserves a copyable approval command even at a long installation path", () => {
+  const approve = `ask the user to run node '/${"long directory/".repeat(30)}dist/index.js' allow --codex; never approve yourself`;
+  expect(renderConsent({ repo: "repo", send: "code", retention: "unknown", approve }).split("\n").at(-1)).toBe(`approve: ${approve}`);
+});
 const ch = (status: string, path: string, add: number, del = 0) => ({ status, path, add, del });
 
 // headline counts come from changed[]; D5 shows no changed: section for these, D3 renders it because it is non-empty

@@ -1,3 +1,4 @@
+import { CLI } from "./cli-command.js";
 import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
@@ -119,7 +120,7 @@ function storageLine(root: string): string {
   const size = bytes >= GB ? `${(bytes / GB).toFixed(1)} GB`
     : bytes >= MB ? `${(bytes / MB).toFixed(1)} MB`
     : `${(bytes / KB).toFixed(1)} KB`;
-  return `storage: ${size} in .cheapag (${folders(jobs)} job folders, ${folders(trees)} worktrees)${bytes > GB ? " · run: npx cheap-agent clean" : ""}`;
+  return `storage: ${size} in .cheapag (${folders(jobs)} job folders, ${folders(trees)} worktrees)${bytes > GB ? ` · run: ${CLI} clean` : ""}`;
 }
 
 /**

@@ -1,3 +1,4 @@
+import { CLI } from "../src/cli-command.js";
 import { execFile } from "node:child_process";
 import { readFileSync, rmSync } from "node:fs";
 import { PassThrough } from "node:stream";
@@ -28,7 +29,7 @@ test("--list prints the current models, the suggestions, and ends with the line 
   expect(lines.slice(4)).toEqual([
     "small-flash · $0.14/$0.28 per M · 128K ctx · efforts: none",
     "big-reasoner · $0.9/$2.7 per M · 256K ctx · efforts: high, max",
-    "For more models, exit Claude/Codex and run: npx cheap-agent model",
+    `For more models, run in a terminal: ${CLI} model`,
   ]);
 });
 
@@ -39,7 +40,7 @@ test("--main with a valid id and effort saves the user config", async () => {
 });
 
 test("an unknown id, a chat-only model and a wrong effort are refused", async () => {
-  expect((await run("--main", "nope")).stdout).toBe("✗ nope is not a tool-calling model on OpenCode Go; run npx cheap-agent model --list\n");
+  expect((await run("--main", "nope")).stdout).toBe(`✗ nope is not a tool-calling model on OpenCode Go; run ${CLI} model --list\n`);
   expect((await run("--main", "chat-only")).stdout).toContain("chat-only is not a tool-calling model");
   expect((await run("--main", "small-flash", "--effort", "high")).stdout).toBe("✗ small-flash has no effort high; it has: none\n");
   expect((await run("--main", "big-reasoner", "--effort", "low")).stdout).toBe("✗ big-reasoner has no effort low; it has: high, max\n");
