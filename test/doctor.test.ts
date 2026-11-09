@@ -19,6 +19,13 @@ test("doctor inspects disabled, malformed and stale installs without mutation", 
   writePlugin(serverEntry, process.execPath);
   expect(doctor(["--client", "both", "--repo", repo.dir], () => {})).toBe(0);
   expect(readFileSync(config)).toEqual(before);
+  const duplicate = '[plugins."cheapag@cheapag"]\nenabled = true\n[mcp_servers.cheapag]\ncommand = "node"\n[mcp_servers.cheapag.env]\nAPI_KEY = "DO_NOT_PRINT_THIS"\n';
+  writeFileSync(config, duplicate);
+  const duplicates: string[] = [];
+  expect(doctor(["--client", "codex", "--repo", repo.dir], s => duplicates.push(s))).toBe(0);
+  expect(duplicates.join("\n")).toContain("duplicate Cheap Agent registrations");
+  expect(duplicates.join("\n")).not.toContain("DO_NOT_PRINT_THIS");
+  expect(readFileSync(config, "utf8")).toBe(duplicate);
   writePlugin(join(home, "missing.js"), process.execPath);
   expect(doctor(["--client", "codex", "--repo", repo.dir], () => {})).toBe(1);
   writeFileSync(config, 'broken = [');
