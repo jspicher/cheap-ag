@@ -33,8 +33,7 @@ const CODEX_ASK_RULE = "After a FAIL, PARTIAL or TIMEOUT, ask the user in chat w
  * The MCP `instructions` (spec: Server instructions; D12 is the status part): Claude Code loads them at session start,
  * so the usage rules travel with the server and nobody edits CLAUDE.md. Claude Code cuts them at 4,096 characters.
  */
-export const instructions = (hard: HardTasks = "delegate", takeover: TakeOver = "ask", host: "claude" | "codex" = "claude") => `Cheap Agent: a cheap worker model writes the code; you plan and review. The user pays for your tokens, not the worker's.
-${host === "codex" ? "Codex: cheapag's tools (delegate, research, jobs, reply, land, ping) may be hidden until you search for them; search for them before reading or editing code.\n" : ""}Send every code change to delegate, including small, mechanical, "quick" or multi-file ones. One call: delegate(task: "<what to change, which files, how to check>"). Edit yourself only if the user asks, or to fix one line after a worker result. Bash file writes (heredocs, redirects, sed -i) are editing too. Write a task's details as - bullets or prose: numbered or lettered items count as separate changes, and three or more get the task refused.
+export const instructions = (hard: HardTasks = "delegate", takeover: TakeOver = "ask", host: "claude" | "codex" = "claude") => `Cheap Agent is available only when the user explicitly requests Cheap Agent for the current task. Installation, connection and repository/provider consent do not authorize delegation. Do not load or call its tools proactively. MCP cannot independently verify conversational intent. After an explicit request, delegate the requested work and review its result.
 ${DIFFICULTY_HINT}${HARD_RULE[hard]}
 ${REVIEW_RULE} ${host === "codex" && takeover === "ask" ? CODEX_ASK_RULE : TAKE_OVER_RULE[takeover]}
 ${VERIFY_RULE}
@@ -69,7 +68,7 @@ function codexHere(dir?: string) {
 }
 
 /** Claude Code defers MCP tools behind tool search unless a tool's `_meta` asks to load upfront (spec: delegate and research always load). */
-const ALWAYS_LOAD = { "anthropic/alwaysLoad": true };
+
 
 /**
  * The instructions the server publishes for a host, from this repo's config. Codex has no Sonnet subagent, so hard
@@ -180,7 +179,7 @@ export async function serve(host: "claude" | "codex" = "claude") {
     "delegate",
     {
       description:
-        `Make any code change: use this for every edit, including small, mechanical, "quick" or multi-file ones; those are exactly what the cheap worker is for, and your tokens cost the user far more than its. One call: task = what to change, which files, how to check. The worker edits an isolated worktree, runs the checks, and lands an OK result (uncommitted) in your working tree; read the result block instead of re-checking. ${DIFFICULTY_HINT} For multi-step work pass plan + steps instead of task. ${PLAN_FORMAT}`,
+        `Only after an explicit user request for Cheap Agent in the current task, make a code change. One call: task = what to change, which files, how to check. The worker edits an isolated worktree, runs the checks, and lands an OK result (uncommitted) in your working tree; read the result block instead of re-checking. ${DIFFICULTY_HINT} For multi-step work pass plan + steps instead of task. ${PLAN_FORMAT}`,
       inputSchema: {
         task: z.string().max(4000).optional().describe("The change in plain words: what to change, which files, how to check. One step, no plan file needed"),
         files: z.string().optional().describe("With task: files or directories it touches, comma-separated (default: the whole repo)"),
@@ -192,10 +191,10 @@ export async function serve(host: "claude" | "codex" = "claude") {
         source: z.string().max(8000).optional().describe("The user's request or the issue text, verbatim, or the repo-relative path of a file holding it. The worker checks the task against it and reports where they disagree"),
         difficulty: z.enum(DIFFICULTIES).optional().describe("Time an engineer new to the code needs: easy < 15 min, medium < 1 h, hard > 1 h. Picks the worker model; a plan step's difficulty: wins"),
         wait: z.boolean().optional().describe('Default true: return when every group settles or one is BLOCKED. false: return RUNNING at once; then jobs(action="wait")'),
+        kind: z.enum(["fix", "change", "feature"]).optional().describe("Task intent; step kind wins, then this value, then inference. feature aliases change."),
         model: MODEL,
         root: ROOT,
       },
-      _meta: ALWAYS_LOAD,
     },
     async (input, extra) => {
       // without an OpenCode login only codex/ models run; delegate answers NO_PROVIDER for any other
@@ -214,7 +213,7 @@ export async function serve(host: "claude" | "codex" = "claude") {
     "research",
     {
       description:
-        "Find and explain code in this repository: asks the cheap read-only research worker a question (it reads the working tree, uncommitted changes included). Returns a short answer with path:line refs and a confidence; verify low-confidence answers before acting.",
+        "Only after an explicit user request for Cheap Agent, find and explain code in this repository: asks the cheap read-only research worker a question (an isolated snapshot includes uncommitted changes but may omit ignored or unlinked files). Returns a short answer with path:line refs and a confidence; verify low-confidence answers before acting.",
       inputSchema: {
         question: z.string().min(1).max(2000).describe("The question, e.g. where is JWT validated and how are expiry errors mapped?"),
         paths: z.string().optional().describe('Comma-separated repo-relative paths to limit the search to, e.g. "src/auth, src/app.ts"'),
@@ -222,7 +221,6 @@ export async function serve(host: "claude" | "codex" = "claude") {
         model: MODEL,
         root: ROOT,
       },
-      _meta: ALWAYS_LOAD,
     },
     async (input, extra) => {
       const provider = detectProvider();

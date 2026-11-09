@@ -1,3 +1,4 @@
+import { canonicalEndpoint } from "./endpoint.js";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
@@ -46,7 +47,7 @@ export const userConfigFile = () => join(process.env.XDG_CONFIG_HOME || join(hom
  */
 export type LocalServer = {
   base_url: string; model: string; api_key_file?: string; api_key_env?: string; context?: number; output?: number;
-  /** USD per million tokens, for spend tracking and the job cost cap; without it a job's cost reads $0. */
+  /** USD per million tokens, for spend tracking and the job cost cap; without it cost is unknown and the dollar cap is incomplete. */
   price?: { input: number; output: number };
 };
 
@@ -89,18 +90,18 @@ export function localServer(): LocalServer | undefined {
 function parseLocal(local: unknown, file: string): LocalServer {
   if (typeof local !== "object" || local === null || Array.isArray(local)) throw new Error(`${file}: local must be an object`);
   const { base_url, model, api_key_file, api_key_env, context, output, price } = local as Record<string, unknown>;
-  if (typeof base_url !== "string" || !/^https?:\/\/\S+$/.test(base_url)) throw new Error(`${file}: local.base_url must be an http(s) URL, e.g. http://127.0.0.1:8080/v1`);
+  if (typeof base_url !== "string" || !/^https?:\/\/\S+$/i.test(base_url)) throw new Error(`${file}: local.base_url must be an http(s) URL, e.g. http://127.0.0.1:8080/v1`);
   if (typeof model !== "string" || !model.trim()) throw new Error(`${file}: local.model must be the server's model id`);
   if (api_key_file !== undefined && (typeof api_key_file !== "string" || !isAbsolute(api_key_file))) throw new Error(`${file}: local.api_key_file must be an absolute path`);
   if (api_key_env !== undefined && (typeof api_key_env !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(api_key_env))) throw new Error(`${file}: local.api_key_env must be an environment variable name, e.g. MY_GATEWAY_KEY`);
   if (api_key_file !== undefined && api_key_env !== undefined) throw new Error(`${file}: local takes api_key_file or api_key_env, not both`);
   const p = price as { input?: unknown; output?: unknown } | undefined;
-  if (p !== undefined && (typeof p !== "object" || p === null || ![p.input, p.output].every((v) => typeof v === "number" && v >= 0))) throw new Error(`${file}: local.price must be { "input": <USD per million tokens>, "output": <USD per million tokens> }`);
+  if (p !== undefined && (typeof p !== "object" || p === null || ![p.input, p.output].every((v) => typeof v === "number" && Number.isFinite(v) && v >= 0))) throw new Error(`${file}: local.price must be { "input": <USD per million tokens>, "output": <USD per million tokens> }`);
   for (const [key, v] of [["context", context], ["output", output]] as const) {
     if (v !== undefined && (typeof v !== "number" || !Number.isInteger(v) || v <= 0)) throw new Error(`${file}: local.${key} must be a positive whole number of tokens`);
   }
   return {
-    base_url: base_url.replace(/\/+$/, ""), model: model.trim(),
+    base_url: canonicalEndpoint(base_url), model: model.trim(),
     ...(api_key_file !== undefined && { api_key_file }), ...(api_key_env !== undefined && { api_key_env: api_key_env as string }),
     ...(p !== undefined && { price: { input: p.input as number, output: p.output as number } }), ...(context !== undefined && { context: context as number }), ...(output !== undefined && { output: output as number }),
   };

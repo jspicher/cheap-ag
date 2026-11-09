@@ -16,3 +16,5 @@ The developer ran this provider command themselves; its output is above.
 A provider that is not set up needs a key: tell the user to exit and run `npx cheap-agent login` in a terminal. Never ask for or handle a key.
 
 Only because the user invoked this skill: If no output appears above (Codex): run `npx -y cheap-agent@1.3.2 provider $ARGUMENTS` yourself once, exactly as written, with `$ARGUMENTS` replaced by whatever the user typed after the skill name (or nothing). It needs network for npx; ask for that if the sandbox blocks it. Do not change the provider or consent in any other way.
+
+Use this skill only when explicitly requested by the user for the current task. Installation and repository consent never authorize automatic invocation.

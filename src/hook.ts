@@ -81,7 +81,7 @@ export function hook(args: string[]): number | Promise<number> {
  * The plugin's SessionStart hook: one line pointing at delegate. The rules live in the server instructions only, since
  * this context lands after Claude Code's cache breakpoint and is rewritten every session (ticket 24.2).
  */
-export const SESSION_CONTEXT = `Cheap Agent is connected: send every code change to its delegate tool (task: "<what to change, which files, how to check>"); its server instructions have the rules.`;
+export const SESSION_CONTEXT = `Cheap Agent requires an explicit user request for the current task; connection and consent are not authorization.`;
 
 const { version: INSTALLED } = createRequire(import.meta.url)("../package.json") as { version: string };
 const UPDATE_URL = "https://registry.npmjs.org/cheap-agent/latest";
@@ -90,51 +90,17 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const updateCacheFile = () => join(dirname(userConfigFile()), "update-check.json");
 type UpdateCache = { checked?: number; latest?: string };
 
-/**
- * Codex sets PLUGIN_ROOT for plugin hook commands (Claude Code sets only CLAUDE_PLUGIN_ROOT), and its hook stdin has a
- * transcript_path under a `.codex` directory; either signal means the shared hooks file is running under Codex.
- */
-function codexHost(): boolean {
-  if (process.env.PLUGIN_ROOT) return true;
-  if (process.stdin.isTTY) return false;
-  try {
-    const input = JSON.parse(readFileSync(0, "utf8")) as { transcript_path?: unknown };
-    return typeof input.transcript_path === "string" && /[\\/]\.codex[\\/]/.test(input.transcript_path);
-  } catch {
-    return false;
-  }
-}
-
-/**
- * The SessionStart output: a short delegate pointer for Claude, or the full Codex server instructions for Codex (which
- * never sees the MCP `instructions`), plus a Claude-Code-style update notice when a new minor or major version is out.
- * The version check never throws or prints: a registry that is slow, offline or broken just leaves the session's
- * context byte-identical.
- */
-async function context(host?: "claude" | "codex"): Promise<number> {
-  const target = host ?? (codexHost() ? "codex" : "claude");
+/** Both hosts start quietly. An explicitly enabled update check may emit a system notice. */
+async function context(_host?: "claude" | "codex"): Promise<number> {
   const latest = await newerVersion();
-  // The terminal notice is yellow, except in the desktop app, which renders no colours; there the sentence Claude
-  // reads in additionalContext is what surfaces the update.
-  const systemMessage = latest && colour(`Cheap Agent ${latest} is available (you have ${INSTALLED}). Update: npx cheap-agent@latest`);
-  // imported lazily so the guard and result hooks never load the MCP server
-  const base = target === "codex" ? (await import("./server.js")).hostInstructions("codex", process.cwd()) : SESSION_CONTEXT;
-  const additionalContext = latest
-    ? `${base} Cheap Agent ${latest} is available (the user has ${INSTALLED}): at the start of your first reply, tell the user in one line to update with \`npx cheap-agent@latest\`.`
-    : base;
-  process.stdout.write(JSON.stringify({
-    ...(systemMessage && { systemMessage }),
-    hookSpecificOutput: { hookEventName: "SessionStart", additionalContext },
-  }) + "\n");
+  if (!latest) return 0;
+  process.stdout.write(JSON.stringify({ systemMessage: `Upstream Cheap Agent ${latest} is available; this fork is ${INSTALLED}. Review the fork release notes before updating.` }) + "\n");
   return 0;
 }
 
-/** Wraps the notice in yellow, except in the desktop app, which does not render terminal colours. */
-const colour = (text: string) => (process.env.CLAUDE_CODE_ENTRYPOINT === "claude-desktop" ? text : `\x1b[33m${text}\x1b[39m`);
-
 /** The newer version to announce, or undefined when the installed version is current (or the check is opted out). */
 async function newerVersion(): Promise<string | undefined> {
-  if (process.env.CHEAPAG_NO_UPDATE_CHECK === "1") return;
+  if (process.env.CHEAPAG_UPDATE_CHECK !== "1" || process.env.CHEAPAG_NO_UPDATE_CHECK === "1") return;
   const latest = await latestVersion();
   // on the published base: a fork build (1.3.2-js.1) is as current as its base, and older than nothing it is built on
   if (!latest || !majorOrMinorNewer(latest, baseVersion(INSTALLED))) return;
@@ -203,7 +169,7 @@ function guard(): number {
 // agent_id is set only on a subagent's calls (seen live on Claude Code 2.1.285); the prompt rules never count or deny them
 type Input = { session_id?: string; prompt_id?: string; agent_id?: string; cwd?: string; tool_name?: string; tool_input?: Record<string, unknown>; tool_response?: unknown };
 /** What this user prompt's cheapag results were: the worker did not finish a step (and Claude's calls since), or an OK passed its checks. */
-type PromptState = { prompt: string; calls: number; notDone?: boolean; okPassed?: boolean };
+type PromptState = { prompt: string; delegated?: boolean; calls: number; notDone?: boolean; okPassed?: boolean };
 
 /** Per-session state; the repo-wide marker lets the plugin's shell test skip node until a cheapag result was ever seen. */
 const stateFile = (root: string, session: string) => join(root, ".cheapag", "hook", `${session.replace(/[^\w-]/g, "_")}.takeover.json`);
@@ -220,15 +186,19 @@ const marker = (root: string) => join(root, ".cheapag", "hook", "takeover");
  */
 function budget(input: Input): string | undefined {
   if (!input.session_id || !input.prompt_id || input.agent_id || typeof input.cwd !== "string" || CHEAPAG_TOOL.test(input.tool_name ?? "")) return;
-  const root = projectRoot(input.cwd);
-  const file = stateFile(root, input.session_id);
+  const roots = targetRoots(input);
+  for (const root of roots) { const reason = budgetAt(input, root); if (reason) return reason; }
+}
+
+function budgetAt(input: Input, root: string): string | undefined {
+  const file = stateFile(root, input.session_id!);
   let state: PromptState;
   try {
     state = JSON.parse(readFileSync(file, "utf8"));
   } catch {
     return; // no cheapag result in this session yet
   }
-  if (state.prompt !== input.prompt_id) return; // a new user prompt starts fresh
+  if (state.prompt !== input.prompt_id || !state.delegated) return; // a new user prompt starts fresh
   const config = loadConfig(root);
   if (state.notDone && config.takeover === "ask") {
     if (input.tool_name === "AskUserQuestion") {
@@ -238,7 +208,7 @@ function budget(input: Input): string | undefined {
     }
     if (ASK_TOOLS.has(input.tool_name ?? "") || (input.tool_name ?? "").startsWith(DESKTOP_TOOL)) return;
     if (READ_TOOLS.has(input.tool_name ?? "")) return;
-    if (OUTSIDE_EDITS.has(input.tool_name ?? "") && outside(root, input.cwd, input.tool_input)) return;
+    if (OUTSIDE_EDITS.has(input.tool_name ?? "") && outside(root, input.cwd!, input.tool_input)) return;
     const command = input.tool_input?.command;
     if (input.tool_name === "Bash" && typeof command === "string" && readOnly(command)) return;
     return "The worker did not finish this step: ask the user first (continue with Claude, retry the worker on another model, or stop) with one question, then do what they pick.";
@@ -251,7 +221,7 @@ function budget(input: Input): string | undefined {
     }
     if (ASK_TOOLS.has(input.tool_name ?? "") || (input.tool_name ?? "").startsWith(DESKTOP_TOOL)) return;
     if (READ_TOOLS.has(input.tool_name ?? "")) return;
-    if (OUTSIDE_EDITS.has(input.tool_name ?? "") && outside(root, input.cwd, input.tool_input)) return;
+    if (OUTSIDE_EDITS.has(input.tool_name ?? "") && outside(root, input.cwd!, input.tool_input)) return;
     const command = input.tool_input?.command;
     if (input.tool_name === "Bash" && typeof command === "string" && readOnly(command)) return;
     return `The worker did not finish this step: hand it to your Agent tool with model: sonnet (the task, the user's words, the block's found:, test=, error: and worktree) instead of doing it yourself, then report its answer. The user can set takeover: "self" in cheapag.json.`;
@@ -274,13 +244,14 @@ function result(): number {
   try {
     const input: Input = JSON.parse(readFileSync(0, "utf8"));
     if (!input.session_id || !input.prompt_id || input.agent_id || typeof input.cwd !== "string") return 0;
+    if (!CHEAPAG_TOOL.test(input.tool_name ?? "")) return 0;
     const out = text(input.tool_response);
     const notDone = didNotFinish(out), okPassed = OK_PASSED.test(out);
     // the worker's own `land applied` finished the block: drop the take-over even when the check never ran
     const cleared = /^OK j\w+ (applied|discarded)\b/m.test(out);
-    if (!notDone && !okPassed && !cleared) return 0;
-    const root = projectRoot(input.cwd);
-    const file = stateFile(root, input.session_id);
+    if (!notDone && !okPassed && !cleared && !/^(?:OK|RUNNING|BUDGET|PROVIDER|BLOCKED|CONFLICT|CANCELLED) j\w+ /m.test(out)) return 0;
+    const root = projectRoot(typeof input.tool_input?.root === "string" ? input.tool_input.root : input.cwd);
+    const file = stateFile(root, input.session_id!);
     let state: PromptState = { prompt: input.prompt_id, calls: 0 };
     try {
       const saved: PromptState = JSON.parse(readFileSync(file, "utf8"));
@@ -289,7 +260,7 @@ function result(): number {
       // first cheapag result of the session
     }
     mkdirSync(join(root, ".cheapag", "hook"), { recursive: true });
-    writeFileSync(file, JSON.stringify({ ...state, ...(notDone && { notDone }), ...(okPassed && { okPassed }), ...(cleared && { notDone: undefined }) } satisfies PromptState));
+    writeFileSync(file, JSON.stringify({ ...state, delegated: true, ...(notDone && { notDone }), ...(okPassed && { okPassed }), ...(cleared && { notDone: undefined }) } satisfies PromptState));
     // shortcut: the marker is never removed, so a repo that once had a cheapag result runs node on every tool call (~50 ms); drop it in `cheapag clean` if that shows
     writeFileSync(marker(root), "");
   } catch {
@@ -309,16 +280,36 @@ function text(v: unknown): string {
   return "";
 }
 
+function fileRoot(file: string): string | undefined {
+  let dir = dirname(file);
+  while (!existsSync(dir) && dirname(dir) !== dir) dir = dirname(dir);
+  try { return projectRoot(dir); } catch { return undefined; }
+}
+
+function active(input: Input, root: string): boolean {
+  if (!input.session_id || !input.prompt_id || input.agent_id) return false;
+  try { const s: PromptState = JSON.parse(readFileSync(stateFile(root, input.session_id), "utf8")); return s.prompt === input.prompt_id && s.delegated === true; } catch { return false; }
+}
+
+function targetRoots(input: Input): string[] {
+  const cwd = input.cwd!;
+  const tool = input.tool_input ?? {};
+  const paths = typeof tool.file_path === "string" ? [tool.file_path] : input.tool_name === "apply_patch" && typeof tool.command === "string" ? patchEdits(tool.command).map(e => e.path) : [];
+  if (input.tool_name === "Bash" && typeof tool.command === "string") for (const re of BASH_WRITES) for (const m of tool.command.matchAll(re)) if (m.groups?.path) paths.push(m.groups.path);
+  const roots = paths.length ? paths.map(p => fileRoot(resolve(cwd, p))) : [fileRoot(join(cwd, "_"))];
+  return [...new Set(roots.filter((r): r is string => !!r))];
+}
+
 function check(input: Input): string | undefined {
   if (process.env.CHEAPAG_ALLOW_EDITS === "1" || !EDIT_TOOLS.has(input.tool_name ?? "")) return;
   const tool = input.tool_input ?? {};
   if (typeof input.cwd !== "string") return;
-  if (input.tool_name === "Bash") return typeof tool.command === "string" ? bashCheck(input.cwd, tool.command) : undefined;
+  if (input.tool_name === "Bash") return typeof tool.command === "string" ? bashCheck(input.cwd, tool.command, input) : undefined;
   if (input.tool_name === "apply_patch") return typeof tool.command === "string" ? patchCheck(input.cwd, tool.command, input) : undefined;
   if (typeof tool.file_path !== "string") return;
-  const root = projectRoot(input.cwd);
-  if (!existsSync(flag(root))) return;
   const file = resolve(input.cwd, tool.file_path);
+  const root = fileRoot(file);
+  if (!root || !active(input, root) || !existsSync(flag(root))) return;
   if (isPlan(root, file)) return; // Claude must be able to write plans of any size
   const limit = loadConfig(root).guard_lines;
   const lines = changed(input.tool_name!, tool, file);
@@ -331,8 +322,7 @@ function check(input: Input): string | undefined {
 type Turn = { prompt: string; edits: Record<string, number> };
 
 /**
- * A turn is one user prompt: Claude Code's prompt_id. Without it (older Claude Code) only the size rule applies, so
- * the turn is undefined and nothing is counted.
+ * A turn is one user prompt: Claude Code's prompt_id. Without it, prompt-scoped enforcement is disabled and nothing is counted.
  */
 function turnState(input: Input, root: string): { turn: Turn; file: string } | undefined {
   if (!input.prompt_id || !input.session_id) return;
@@ -373,7 +363,9 @@ function patchEdits(patch: string): { path: string; lines: number }[] {
     if (file) {
       current = { path: file[1].trim(), lines: 0 };
       edits.push(current);
-    } else if (line.startsWith("*** ") && !line.startsWith("*** Move to:")) {
+    } else if (line.startsWith("*** Move to:") && current) {
+      edits.push({ path: line.slice("*** Move to:".length).trim(), lines: current.lines });
+    } else if (line.startsWith("*** ")) {
       current = undefined;
     } else if (current && (line.startsWith("+") || line.startsWith("-"))) {
       current.lines++;
@@ -384,24 +376,17 @@ function patchEdits(patch: string): { path: string; lines: number }[] {
 
 /** Each file in a Codex patch goes through the Edit/Write rules; a malformed patch yields no files and is allowed. */
 function patchCheck(cwd: string, patch: string, input: Input): string | undefined {
-  const root = projectRoot(cwd);
-  if (!existsSync(flag(root))) return;
-  const edits = patchEdits(patch);
-  if (!edits.length) return;
-  const limit = loadConfig(root).guard_lines;
-  const state = turnState(input, root);
-  // a denied patch is not applied, so none of its files count until every one of them passes
-  const counts = state && { ...state.turn.edits };
-  for (const edit of edits) {
+  const states = new Map<string, NonNullable<ReturnType<typeof turnState>>>();
+  for (const edit of patchEdits(patch)) {
     const file = resolve(cwd, edit.path);
-    if (isPlan(root, file)) continue;
-    const reason = editRules(counts, edit.path, file, edit.lines, limit);
+    const root = fileRoot(file);
+    if (!root || !active(input, root) || !existsSync(flag(root)) || isPlan(root, file)) continue;
+    const state = states.get(root) ?? turnState(input, root)!;
+    states.set(root, state);
+    const reason = editRules(state.turn.edits, edit.path, file, edit.lines, loadConfig(root).guard_lines);
     if (reason) return reason;
   }
-  if (state && counts) {
-    state.turn.edits = counts;
-    saveTurn(root, state);
-  }
+  for (const [root, state] of states) saveTurn(root, state);
 }
 
 /** Plans live in .plan/ and are how Claude delegates, so the guard never blocks them. */
@@ -443,13 +428,14 @@ function outside(root: string, cwd: string, tool: Record<string, unknown> | unde
 }
 
 /** A Bash command is denied when it writes a file inside the repo (any size: the lines can't be counted), unless the file is a plan. */
-function bashCheck(cwd: string, command: string): string | undefined {  const root = projectRoot(cwd);
-  if (!existsSync(flag(root))) return;
+function bashCheck(cwd: string, command: string, input: Input): string | undefined {
+  const root = fileRoot(join(cwd, "_"));
   const targets: string[] = [];
   for (const re of BASH_WRITES) for (const m of command.matchAll(re)) if (m.groups?.path) targets.push(m.groups.path);
-  const inRepo = (p: string) => { const abs = resolve(cwd, p); return abs.startsWith(root + sep) && !isPlan(root, abs); };
+  const inRepo = (p: string) => { const abs = resolve(cwd, p); const r = fileRoot(abs); return !!r && active(input, r) && existsSync(flag(r)) && !isPlan(r, abs); };
   const written = targets.filter((p) => p !== "/dev/null" && inRepo(p));
   if (written.length) return `Bash writing ${written[0]}: ${REDIRECT}`;
+  if (!root || !active(input, root) || !existsSync(flag(root))) return;
   if (BASH_INPLACE.test(command)) return `Bash in-place edit (sed/perl -i): ${REDIRECT}`;
   if (BASH_CODE_WRITES.test(command)) return `Bash running code that writes files: ${REDIRECT}`;
 }

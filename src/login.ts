@@ -1,3 +1,4 @@
+import { canonicalEndpoint } from "./endpoint.js";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -186,10 +187,7 @@ async function localLogin(out: (line?: string) => void): Promise<boolean> {
   } catch {} // a damaged entry is replaced
   out("e.g. llama.cpp http://127.0.0.1:8080/v1, Ollama http://127.0.0.1:11434/v1, or a gateway's https://…/v1");
   let base = ((await ask(`Server URL [Enter = ${current?.base_url ?? LOCAL_URL}]: `)) || current?.base_url || LOCAL_URL).replace(/\/+$/, "");
-  if (!/^https?:\/\/\S+$/.test(base)) {
-    out(`✗ "${base}" is not an http(s) URL; nothing changed`);
-    return false;
-  }
+  try { base = canonicalEndpoint(base); } catch (err) { out(`✗ ${(err as Error).message}; nothing changed`); return false; }
   if (base.startsWith("http:") && !privateHost(base)) {
     out(`✗ plain http to a public host would send code and key unencrypted; use https (plain http is only for this machine or a private network); nothing changed`);
     return false;

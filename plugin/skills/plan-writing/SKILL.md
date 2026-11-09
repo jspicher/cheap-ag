@@ -1,4 +1,5 @@
 ---
+disable-model-invocation: true
 name: plan-writing
 description: Write or fix a Cheap Agent plan file before calling the cheapag delegate tool. Use when planning a change of more than ~20 lines or several files for the cheap worker, splitting work into steps, or after delegate rejects a plan.
 ---
@@ -74,3 +75,5 @@ done-when: section "Rate limits" exists under /api/login
 - `steps="3"`: one step, one job. `steps="3-5"`: a range, run in order in one job. `steps="1-2,3"`: comma-separated groups, run in parallel unless their `files:` overlap or `needs:` orders them.
 - `delegate(plan=".plan/rate-limit.md", steps="1-2,3")`
 - `delegate(plan=".plan/rate-limit.md", steps="2", note="use the existing ipFrom(req) helper")`: a `note` is at most 300 characters, for one-off guidance.
+
+Use this skill only when explicitly requested by the user for the current task. Installation and repository consent never authorize automatic invocation.

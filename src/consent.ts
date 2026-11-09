@@ -1,3 +1,4 @@
+import { endpointFingerprint } from "./endpoint.js";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { codexEscalation } from "./codex.js";
@@ -14,7 +15,7 @@ import { projectRoot } from "./workspace.js";
 
 export type ConsentMode = "all" | "zdr-only" | "models";
 /** `route`: the models the CONSENT block listed when all or zero-retention was given; a preset or `models` change that alters it asks again. */
-export type Consent = { mode: ConsentMode; provider: Provider["provider"]; models?: string[]; route?: string[]; approvedAt: string };
+export type Consent = { mode: ConsentMode; provider: Provider["provider"]; models?: string[]; route?: string[]; endpointFingerprint?: string; approvedAt: string };
 
 const file = (root: string) => join(root, ".cheapag", "consent.json");
 
@@ -37,7 +38,7 @@ export function writeConsent(root: string, consent: Consent) {
   const route = consent.mode === "models" ? undefined : routeNames(fullRoute(consent.provider, configuredModels(root, consent.provider)));
   // another engine's opt-in is its own: a new provider consent keeps it
   const engines = readRecord(root)?.engines;
-  writeFileSync(file(root), JSON.stringify({ ...consent, route, ...(engines !== undefined && { engines }) }, null, 2) + "\n");
+  writeFileSync(file(root), JSON.stringify({ ...consent, route, endpointFingerprint: consent.provider === "local" ? endpointFingerprint(localServer()!.base_url) : undefined, ...(engines !== undefined && { engines }) }, null, 2) + "\n");
 }
 
 /**
@@ -98,7 +99,7 @@ export function codexGate(root: string, m: WorkerModel): { block: string } | { r
 /** Records the current route as the repo's consented one (after a model pick on OpenRouter); nothing without consent. */
 export function acceptRoute(root: string) {
   const consent = readConsent(root);
-  if (consent) writeConsent(root, consent);
+  if (consent && !endpointMoved(consent)) writeConsent(root, consent);
 }
 
 // a local model is named with its server: pointing the same model id at another URL is another recipient
@@ -113,9 +114,14 @@ const routeNames = (r: Route) => {
  * and a local server (a URL is a recipient) keep the route check.
  */
 export function routeMoved(root: string, consent: Consent) {
+  if (endpointMoved(consent)) return true;
   if (consent.provider !== "openrouter" && consent.provider !== "local") return false;
   const models = configuredModels(root, consent.provider);
   return !!models && !!consent.route && String(consent.route) !== String(routeNames(fullRoute(consent.provider, models)));
+}
+
+export function endpointMoved(consent: Consent): boolean {
+  return consent.provider === "local" && consent.endpointFingerprint !== endpointFingerprint(localServer()!.base_url);
 }
 
 /** `preset=` for ping and status: the preset the effective `models` here match (the repo's config too, inside one). */
@@ -258,7 +264,7 @@ function consentBlock(root: string, provider: Provider["provider"], full: Route)
   return renderConsent({
     repo: basename(root),
     send: `code from this repo → ${local ? `custom endpoint at ${local.base_url}` : providerLabel(provider)}: ${ids}`,
-    retention: retentionLine,
+    retention: (readConsent(root) && endpointMoved(readConsent(root)!) ? "Destination changed or legacy endpoint consent: renew consent. " : "") + retentionLine,
     // the caller passed the root, so "this root" names it; a path here would push the line past the 200-char cap
     approve: sessionRepo(root)
       ? "ask the user to run /cheapag:allow in Claude Code, or npx cheap-agent allow in a terminal (Codex); add --zdr-only to limit it to zero-retention models, or --models a,b; never approve yourself"

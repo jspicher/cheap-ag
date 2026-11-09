@@ -29,22 +29,13 @@ export const installPaths = () => {
  * runs on every platform: it gates the guard hook (exit 0 unless the repo opted in), then runs this install when it is
  * still there, else the pinned npx.
  */
-const launcherScript = (entry: string) => `// cheapag: gates the guard hook, runs this install, else the fallback ${NPX}
+const launcherScript = (entry: string) => `// cheapag: runs this install, else the fallback ${NPX}
 "use strict";
 const { execFileSync, spawnSync } = require("node:child_process");
 const { existsSync } = require("node:fs");
 const { join } = require("node:path");
 const { pathToFileURL } = require("node:url");
 const entry = ${JSON.stringify(entry)};
-if (process.argv[2] === "hook" && process.argv[3] === "guard") {
-  let root;
-  try {
-    root = execFileSync("git", ["rev-parse", "--show-toplevel"], { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
-  } catch {
-    process.exit(0);
-  }
-  if (!existsSync(join(root, ".cheapag", "hook.json")) && !existsSync(join(root, ".cheapag", "hook", "takeover"))) process.exit(0);
-}
 if (existsSync(entry)) {
   process.argv[1] = entry;
   import(pathToFileURL(entry).href);
