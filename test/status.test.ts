@@ -93,7 +93,8 @@ test("cheapag status with no login, no jobs and no spend; outside a repository; 
   const { repo, env, status } = setup();
   expect(status()).toBe(`cheapag ${version} provider=none (run npx cheap-agent login)\nconsent: not given; run /cheapag:allow\nstorage: 0.0 KB in .cheapag (0 job folders, 0 worktrees)\nrunning: none\nrecent: none\nspend: none tracked in the last 30 days\n`);
   const outside = join(repo.dir, ".git"); // inside .git, rev-parse --show-toplevel fails
-  expect(status(outside)).toContain("repo: not a git repository (no jobs or consent here)\nspend: none");
+  expect(() => status(outside)).toThrow();
+  expect(execFileSync(process.execPath, [serverEntry, "status", "--repo", repo.dir], { cwd: outside, env, encoding: "utf8" })).toContain("cheapag");
   const r = spawnSync(process.execPath, [serverEntry, "status", "--x"], { cwd: repo.dir, env, encoding: "utf8" });
   expect([r.status, r.stdout]).toEqual([1, "✗ usage: cheapag status\n"]);
 });

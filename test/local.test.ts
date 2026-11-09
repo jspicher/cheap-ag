@@ -3,6 +3,8 @@ import { createServer } from "node:http";
 import { join } from "node:path";
 import { afterEach, expect, onTestFinished, test, vi } from "vitest";
 import { loadConfig, privateHost } from "../src/config.js";
+import { canonicalEndpoint, endpointFingerprint } from "../src/endpoint.js";
+import { allowCodex, readEngines } from "../src/consent.js";
 import { consentGate, routeMoved, writeConsent } from "../src/consent.js";
 import { detectProvider } from "../src/credentials.js";
 import { ensureOpencode, stopOpencode } from "../src/opencode.js";
@@ -14,6 +16,33 @@ import { callText, hermeticHome, homeEnv, slow, startServer, tempRepo } from "./
 /** The local provider: any OpenAI-compatible server the user config names (llama.cpp, Strata, Ollama, LM Studio, vLLM, LiteLLM). */
 
 const LOCAL = { base_url: "http://127.0.0.1:8084/v1", model: "qwen3.8-flash-next-gyro-gyro-s" };
+
+test("endpoint identity binds model-specific and legacy consent, preserving Codex consent", () => {
+  const { file } = home({ local: LOCAL });
+  const repo = tempRepo(); onTestFinished(repo.cleanup);
+  allowCodex(repo.dir);
+  writeConsent(repo.dir, { mode: "models", provider: "local", models: [`local/${LOCAL.model}`], approvedAt: "now" });
+  expect(consentGate(repo.dir, "local")).toHaveProperty("route");
+  writeFileSync(file, JSON.stringify({ local: { ...LOCAL, base_url: LOCAL.base_url + "/" } }));
+  expect(consentGate(repo.dir, "local")).toHaveProperty("route");
+  writeFileSync(file, JSON.stringify({ local: { ...LOCAL, base_url: LOCAL.base_url + "/other" } }));
+  expect(consentGate(repo.dir, "local")).toHaveProperty("block");
+  expect(readEngines(repo.dir).codex).toBeTruthy();
+  const consent = join(repo.dir, ".cheapag/consent.json");
+  const legacy = JSON.parse(readFileSync(consent, "utf8")); delete legacy.endpointFingerprint;
+  writeFileSync(consent, JSON.stringify(legacy));
+  writeFileSync(file, JSON.stringify({ local: LOCAL }));
+  expect(consentGate(repo.dir, "local")).toHaveProperty("block");
+});
+
+test("endpoint canonicalization preserves paths and rejects URL secrets", () => {
+  expect(endpointFingerprint("HTTPS://EXAMPLE.COM:443/v1/")).toBe(endpointFingerprint("https://example.com/v1"));
+  expect(endpointFingerprint("https://example.com/V1")).not.toBe(endpointFingerprint("https://example.com/v1"));
+  for (const url of ["https://user:SECRET@example.com/v1", "https://example.com/v1?key=SECRET", "http://localhost/v1#SECRET"]) {
+    expect(() => canonicalEndpoint(url)).toThrow(/without embedded credentials/);
+    try { canonicalEndpoint(url); } catch (e) { expect(String(e)).not.toContain("SECRET"); }
+  }
+});
 
 /** A hermetic home whose user config holds `config`, with this process's XDG paths pointed at it. */
 function home(config: object, logins: Record<string, string> = {}) {

@@ -86,7 +86,7 @@ test("a relative root, or one outside any repository, fails before any job", asy
   mkdirSync(outside, { recursive: true });
   onTestFinished(() => removeDir(outside));
   expect(await callText(server.client, "delegate", { task: "Add src/x.ts", root: "../elsewhere" })).toBe("FAIL reason: root ../elsewhere must be an absolute path");
-  expect(await callText(server.client, "delegate", { task: "Add src/x.ts", root: outside })).toBe(`FAIL reason: ${outside} is not inside a git repository`);
+  expect(await callText(server.client, "delegate", { task: "Add src/x.ts", root: outside })).toBe(`FAIL reason: ${outside}: is not inside a git repository; specify --repo <path>`);
   expect(await callText(server.client, "jobs", { action: "list", root: "rel" })).toBe("FAIL reason: root rel must be an absolute path");
   expect(await callText(server.client, "ping", { root: "rel" })).toBe("FAIL reason: root rel must be an absolute path");
   expect(fake.recorded.prompts).toHaveLength(0);

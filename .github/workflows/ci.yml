@@ -33,17 +33,10 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm run typecheck
       - run: npm test -- ${{ inputs.tests }}
-      - name: Smoke test the packaged CLI
-        if: inputs.tests == ''
-        shell: bash
-        run: |
-          npm pack
-          tmp="$(mktemp -d)"
-          npm install --prefix "$tmp" ./cheap-agent-*.tgz
-          out="$("$tmp/node_modules/.bin/cheapag" status)"
-          echo "$out"
-          echo "$out" | grep -q cheapag
+      - name: Smoke test the packaged CLI and launcher in temporary homes
+        run: node test/packed-smoke.mjs
       - name: Live tests when an API key is present
         if: inputs.tests == ''
         shell: bash

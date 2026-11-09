@@ -120,7 +120,7 @@ test("a dependency that did not land OK: the dependent group is not started and 
   );
   const text = await delegate("1,2,3");
   const jobs = jobsIn(text);
-  expect(text.split("\n")[0]).toMatch(/^BATCH b[0-9a-z]{4} groups=3 FAIL=2 OK=1 landed=1 integration=none cost=\$0\.000$/);
+  expect(text.split("\n")[0]).toMatch(/^BATCH b[0-9a-z]{4} groups=3 FAIL=2 OK=1 landed=1 integration=none cost=\$0\.000\(mixed\)$/);
   const two = jobs.find((j) => j.step === "2")!;
   expect(text).toContain(`FAIL ${two.job} step=2 files=0 +0/-0 turns=0 cost=$0.000\nreason: needs 1 (FAIL)\n\n`);
   expect(text).not.toContain(`.cheapag/jobs/${two.job}/`); // compact: no log line
@@ -206,7 +206,7 @@ test("a group BLOCKED early: delegate returns at once with it first, the others 
   const batch = batchOf(early);
   const [one, two, three] = jobsIn(early).sort((a, b) => a.step.localeCompare(b.step)).map((j) => j.job);
   expect(early).toMatch(new RegExp([
-    `^BATCH ${batch} groups=3 BLOCKED=1 RUNNING=2 landed=0 integration=none cost=\\$0\\.000`,
+    `^BATCH ${batch} groups=3 BLOCKED=1 RUNNING=2 landed=0 integration=none cost=\\$0\\.000(?:\\(known-subtotal,incomplete\\)|\\(mixed\\))?`,
     `BLOCKED ${two} step=2 files=0 \\+0/-0 turns=0 cost=\\$0\\.000`,
     "question: Which header style\\?",
     "options:",

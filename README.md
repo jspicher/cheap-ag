@@ -66,7 +66,7 @@ Then, in each project, once:
 /cheapag:allow
 ```
 
-**That's it.** Ask Claude for changes like you always do.
+**Explicit requests only.** Ask Claude to use Cheap Agent for the current task when you want delegation.
 
 ### Codex
 
@@ -92,7 +92,7 @@ Start `codex` in your project and trust the 3 cheapag hooks when it asks. Then, 
 $cheapag:allow
 ```
 
-**That's it.** Ask Codex for changes like you always do.
+**Explicit requests only.** Ask Codex to use Cheap Agent for the current task when you want delegation.
 
 **You need:**
 - [Claude Code](https://claude.com/claude-code) or [Codex](https://developers.openai.com/codex)
@@ -206,7 +206,7 @@ With the [Codex CLI](https://github.com/openai/codex) installed and signed in, `
 
 - Code goes to OpenAI, so it needs its own opt-in: run `npx cheap-agent allow --codex` (or `/cheapag:allow --codex`) in the project. It doesn't change, or need, the consent for your Cheap Agent provider.
 - Codex runs in the job's worktree with `codex exec --sandbox workspace-write`, no approvals and no network, and without your Codex config, MCP servers or hooks (so nothing else sees the code and no hook writes into the worktree). Set `CHEAPAG_CODEX_BIN` if `codex` isn't on your PATH.
-- Caps, checks, self-fixes and landing work as usual. When a check still fails after the self-fixes, the task escalates by resuming the same Codex thread once at high reasoning effort (never lower than your config's). A Codex task never asks a question (it notes ambiguities under risks) and shows `cost=$0.000`: a ChatGPT plan reports no price. Your plan's usage limit ends the job as BUDGET.
+- Caps, checks, self-fixes and landing work as usual. When a check still fails after the self-fixes, the task escalates by resuming the same Codex thread once at high reasoning effort (never lower than your config's). A Codex task never asks a question (it notes ambiguities under risks) and shows `cost=unknown`: a ChatGPT plan reports no price. Your plan's usage limit ends the job as BUDGET.
 - Codex alone needs no `npx cheap-agent login`: without one, `codex/` tasks still run, `ping` reports `provider=none`, and every other `delegate` or `research` asks you to log in.
 - Batch repairs keep the selected Codex model, including repairs started later by `land`. OpenCode provider recovery and backend retries apply only to OpenCode jobs.
 - `delegate` only for now: `research` on a `codex/` model is refused. Design notes: [docs/codex-worker.md](docs/codex-worker.md).
@@ -223,7 +223,7 @@ The worker can run on any OpenAI-compatible API: your own server (llama.cpp's `l
 - **The API key**, only if the endpoint checks one. Give the name of an environment variable that holds it (e.g. `MY_GATEWAY_KEY`, set where Claude Code starts), or the path to a file that holds just the key. OpenCode reads it; Cheap Agent never does, and the key never lands in a config.
 - **The model**, picked from the endpoint's own list.
 - **The context window** a single request gets. It's detected from llama.cpp (split across its parallel slots) and LM Studio. Set it, so OpenCode can compact a long job before the endpoint rejects it.
-- **Prices**, optional: input/output in USD per million tokens (e.g. `0.27/1.10`). Without them, spend tracking and the job cost cap see $0.
+- **Prices**, optional: input/output in USD per million tokens (e.g. `0.27/1.10`). Without usable pricing, cost is unknown and the dollar cap is incomplete; time and turn caps still apply.
 
 It's saved as `local` in `~/.config/cheapag/config.json`, and only there: a repo's `cheapag.json` can't point the worker at another endpoint. While it's set, it's used even if you're also logged in to a hosted provider. Logging in to a hosted provider removes it.
 
@@ -270,7 +270,7 @@ PRs are welcome, and I'm more than happy to merge them. Setup, where things live
 
 ## Update or remove
 
-New versions are announced on the [Releases page](https://github.com/muaaz9329/cheap-ag/releases). Cheap Agent also tells you when a session starts if a new minor or major version is out; set `CHEAPAG_NO_UPDATE_CHECK=1` to turn that off.
+New versions are announced on the [Releases page](https://github.com/muaaz9329/cheap-ag/releases). Startup is quiet. Set `CHEAPAG_UPDATE_CHECK=1` to opt into upstream version checks; fork users should review fork release notes before updating.
 
 **Update:**
 
@@ -299,3 +299,21 @@ In Codex:
 ```bash
 codex plugin remove cheapag@cheap-agent
 ```
+
+## Fork integration behavior
+
+Installation, connection, and repository/provider consent are technical prerequisites, never permission to delegate. Every skill (including status and plan-writing) requires explicit invocation. There is no persistent task authorization switch. MCP cannot independently verify conversational intent; the host must enforce this policy.
+
+Use `--repo <path>` with `allow`, `hook`, `status`, `clean`, and `watch` when targeting another repository. Relative paths resolve from the invocation directory. Outside a repository, supply a target; job IDs never trigger sibling searches. MCP `root` remains absolute. Guards require a matching session and prompt after a delegation result in that repository; absent prompt IDs disable enforcement.
+
+Custom endpoint consent is now bound to a SHA-256 fingerprint of the canonical URL. Existing local-provider consent must be renewed with `cheapag allow --repo <path>`; changing the destination requires renewal even with the same model. Scheme, host, default port and trailing slash equivalents share an identity; meaningful paths remain distinct. Credentials, queries and fragments in URLs are rejected; key-file and environment references remain supported. Independent Codex consent and aliases are preserved.
+
+`delegate` accepts optional `kind: fix|change|feature`. A step kind wins over call kind, then inference applies. `feature` aliases `change`; any fix in a group enables fix checks. Integration repairs remain fixes.
+
+Research records separate reproduction command, claimed outcome and execution verification. Verified means an exact command was observed completing, not that its output interpretation was proven. Quoted and argument whitespace is significant. Denied or unmatched claims are unverified. Snapshots may omit ignored or unlinked files; historical handoffs are context only. Older records remain readable.
+
+Usage retains numeric `costUsd` with optional `costSource` (`reported`, `configured`, `unknown`, `mixed`) and `costIncomplete`. Configured prices are estimates; unknown pricing is never displayed as free. Mixed totals show their known subtotal and incomplete coverage; legacy amounts remain readable. Dollar caps enforce known amounts, while time and turn caps always apply.
+
+Run `cheapag doctor [--client codex|claude|both] [--repo <path>]` for a read-only installation report (default: both clients, current directory). It checks runtime/launcher paths, generated manifests, configuration references, enablement, duplicates and explicit trust entries. Disabled-by-choice is normal. Malformed configuration or broken referenced installations return failure. It performs no repairs, provider calls or host startup, and does not display credential values. Inspected layers are reported individually: effective host configuration and connectivity are not asserted. See [Codex configuration layers](https://developers.openai.com/codex/config-basic/) and [skill invocation metadata](https://learn.chatgpt.com/docs/build-skills#optional-metadata).
+
+Landing rehashes affected tracked files in a disposable index before its three-way check. This protects against stale stat entries and assume-unchanged flags, preserving the real index, stash and concurrent contents. It does not eliminate edits racing after the landing check. See [fork provenance](docs/fork-provenance.md).

@@ -65,7 +65,8 @@ test("off by default: even a large write is left to the normal permission flow",
 });
 
 test("on: a large edit is denied with a redirect to delegate; small edits pass; the env bypass and off restore editing", () => {
-  const { run, edit, cli, repo } = setup();
+  const { run, edit, cli, repo, result } = setup();
+  result("OK jab12 step=1 files=0 tests=none");
   expect(cli("on")).toMatch(/edit guard on .*over 20 changed lines/);
   const reason = run("Write", { file_path: "big.ts", content: lines(21) });
   expect(reason).toMatch(/^Large edit \(21 changed lines, over 20\): write a plan step and use the cheapag server's delegate tool/);
@@ -89,7 +90,8 @@ test("on: a large edit is denied with a redirect to delegate; small edits pass; 
 });
 
 test("on: Bash commands that write repo files are denied; reads, tests, /dev/null and .plan/ pass", () => {
-  const { run, cli } = setup();
+  const { run, cli, result } = setup();
+  result("OK jab12 step=1 files=0 tests=none");
   cli("on");
   const bash = (command: string, extraEnv?: Record<string, string>) => run("Bash", { command }, { extraEnv });
   expect(bash("cat > src/errors.js <<'EOF'\nexport class X {}\nEOF")).toMatch(/^Bash writing src\/errors.js: write a plan step/);
@@ -109,7 +111,8 @@ test("on: Bash commands that write repo files are denied; reads, tests, /dev/nul
 });
 
 test("on: the 3rd edit to one file in a turn is denied; other files and a new turn start fresh", () => {
-  const { edit, cli, repo } = setup();
+  const { edit, cli, repo, result } = setup();
+  result("OK jab12 step=1 files=0 tests=none");
   cli("on");
   expect(edit("a.ts", "1", "2")).toBeNull();
   expect(edit("./a.ts", "2", "3")).toBeNull();
@@ -120,7 +123,8 @@ test("on: the 3rd edit to one file in a turn is denied; other files and a new tu
 });
 
 test("guard_lines comes from the repo's cheapag.json", () => {
-  const { run, cli, repo } = setup();
+  const { run, cli, repo, result } = setup();
+  result("OK jab12 step=1 files=0 tests=none");
   writeFileSync(join(repo.dir, "cheapag.json"), JSON.stringify({ guard_lines: 5 }));
   expect(cli("on")).toMatch(/over 5 changed lines/);
   expect(run("Write", { file_path: "f.ts", content: lines(5) })).toBeNull();
@@ -128,7 +132,8 @@ test("guard_lines comes from the repo's cheapag.json", () => {
 });
 
 test("on: a Codex apply_patch is guarded per file like Edit/Write; garbage is allowed", () => {
-  const { run, cli } = setup();
+  const { run, cli, result } = setup();
+  result("OK jab12 step=1 files=0 tests=none");
   cli("on");
   const patch = (command: string, prompt?: string) => run("apply_patch", { command }, { prompt });
   // a small patch adds and removes two lines: well under the 20-line limit
@@ -145,101 +150,52 @@ test("on: a Codex apply_patch is guarded per file like Edit/Write; garbage is al
   expect(patch("*** Begin Patch\n*** End Patch")).toBeNull();
 });
 
-test("context: the SessionStart hook prints a one-line pointer to delegate; the rules stay in the server instructions", () => {
-  // a fresh cache means the update check makes no network call
-  const out = contextOut({ checked: Date.now(), latest: version }, { CLAUDE_CODE_ENTRYPOINT: "cli" });
-  expect(out.hookSpecificOutput.hookEventName).toBe("SessionStart");
-  expect(out.hookSpecificOutput.additionalContext).toContain("delegate tool");
-  expect(out.hookSpecificOutput.additionalContext).toContain('task: "<what to change, which files, how to check>"');
-  expect(out.hookSpecificOutput.additionalContext.length).toBeLessThan(250); // rewritten every session, after the cache breakpoint
-  expect(out.systemMessage).toBeUndefined();
-});
-
-/** Runs `hook context` hermetically, with a fresh cache the caller controls, so no test can touch the network or ~/.config. */
-function contextOut(cache: { checked: number; latest: string }, extraEnv: Record<string, string> = {}, host?: "codex", stdin = "") {
-  const { home, env } = hermeticHome();
-  onTestFinished(() => rmSync(home, { recursive: true, force: true }));
-  const dir = join(home, "config", "cheapag");
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "update-check.json"), JSON.stringify(cache));
-  const args = ["hook", "context", ...(host ? [host] : [])];
-  return JSON.parse(execFileSync(process.execPath, [serverEntry, ...args], { env: { ...env, ...extraEnv }, input: stdin, encoding: "utf8" }));
+/** Quiet for both hosts; update checks require explicit opt-in. */
+function contextOut(extraEnv: Record<string, string> = {}, host?: string) {
+  const { home, env } = hermeticHome(); onTestFinished(() => rmSync(home, { recursive: true, force: true }));
+  const dir = join(home, "config", "cheapag"); mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "update-check.json"), JSON.stringify({ checked: Date.now(), latest: "99.0.0" }));
+  return execFileSync(process.execPath, [serverEntry, "hook", "context", ...(host ? [host] : [])], { env: { ...env, ...extraEnv }, input: "", encoding: "utf8" });
 }
-
-test("context codex: the SessionStart hook prints the full Codex instructions, including the hidden-tools warning", () => {
-  const out = contextOut({ checked: Date.now(), latest: version }, { CLAUDE_CODE_ENTRYPOINT: "cli" }, "codex");
-  expect(out.hookSpecificOutput.hookEventName).toBe("SessionStart");
-  const text = out.hookSpecificOutput.additionalContext as string;
-  expect(text).toContain("research");
-  expect(text).toContain("An OK is done");
-  expect(text).toContain("search for them");
-  expect(text.length).toBeLessThanOrEqual(4096);
+test("connected but unrequested: both hosts stay quiet even with an available update", () => {
+  expect(contextOut()).toBe(""); expect(contextOut({}, "codex")).toBe("");
+  expect(contextOut({ PLUGIN_ROOT: "/tmp/plugin" })).toBe("");
 });
-
-test("context: PLUGIN_ROOT marks Codex, so plain hook context prints the full Codex instructions", () => {
-  const out = contextOut({ checked: Date.now(), latest: version }, { CLAUDE_CODE_ENTRYPOINT: "cli", PLUGIN_ROOT: "/Users/x/.codex/plugins/cheapag" });
-  expect(out.hookSpecificOutput.hookEventName).toBe("SessionStart");
-  expect(out.hookSpecificOutput.additionalContext).toContain("search for them");
-});
-
-test("context: a transcript_path under .codex marks Codex, so plain hook context prints the full Codex instructions", () => {
-  const stdin = JSON.stringify({ transcript_path: "/Users/x/.codex/sessions/a.jsonl" });
-  const out = contextOut({ checked: Date.now(), latest: version }, { CLAUDE_CODE_ENTRYPOINT: "cli", PLUGIN_ROOT: "" }, undefined, stdin);
-  expect(out.hookSpecificOutput.hookEventName).toBe("SessionStart");
-  expect(out.hookSpecificOutput.additionalContext).toContain("search for them");
-});
-
-test("context: neither Codex signal keeps the byte-identical Claude one-liner", () => {
-  const stdin = JSON.stringify({ transcript_path: "/Users/x/.claude/projects/a.jsonl" });
-  const out = contextOut({ checked: Date.now(), latest: version }, { CLAUDE_CODE_ENTRYPOINT: "cli", PLUGIN_ROOT: "" }, undefined, stdin);
-  expect(out.hookSpecificOutput.additionalContext).toBe(SESSION_CONTEXT);
-});
-
-test("context: a newer minor or major version adds a yellow systemMessage and tells Claude to prompt the update", () => {
-  const [major, minor] = npm.split(".").map(Number);
-  for (const latest of [`${major}.${minor + 1}.0`, `${major + 1}.0.0`]) {
-    const out = contextOut({ checked: Date.now(), latest }, { CLAUDE_CODE_ENTRYPOINT: "cli" });
-    expect(out.systemMessage).toBe(`\x1b[33mCheap Agent ${latest} is available (you have ${version}). Update: npx cheap-agent@latest\x1b[39m`);
-    expect(out.hookSpecificOutput.hookEventName).toBe("SessionStart");
-    expect(out.hookSpecificOutput.additionalContext).toContain(latest);
-    expect(out.hookSpecificOutput.additionalContext).toContain("npx cheap-agent@latest");
-    expect(out.hookSpecificOutput.additionalContext).toContain(`${SESSION_CONTEXT} Cheap Agent ${latest} `);
-  }
-});
-
-test("context: in the desktop app the systemMessage has no colour but Claude is still told about the update", () => {
-  const [major, minor] = npm.split(".").map(Number);
-  const latest = `${major}.${minor + 1}.0`;
-  const out = contextOut({ checked: Date.now(), latest }, { CLAUDE_CODE_ENTRYPOINT: "claude-desktop" });
-  expect(out.systemMessage).not.toContain("\x1b[");
-  expect(out.systemMessage).toBe(`Cheap Agent ${latest} is available (you have ${version}). Update: npx cheap-agent@latest`);
-  expect(out.hookSpecificOutput.additionalContext).toContain(latest);
-  expect(out.hookSpecificOutput.additionalContext).toContain("npx cheap-agent@latest");
-});
-
-test("context: a newer patch alone does not notify", () => {
-  const [major, minor, patch] = npm.split(".").map(Number);
-  const out = contextOut({ checked: Date.now(), latest: `${major}.${minor}.${patch + 1}` }, { CLAUDE_CODE_ENTRYPOINT: "cli" });
-  expect(out.systemMessage).toBeUndefined();
-  expect(out.hookSpecificOutput.additionalContext).toBe(SESSION_CONTEXT);
-});
-
-test("context: a fork build (x.y.z-js.N) is compared on its base, so the published base itself is no update", () => {
-  expect(version).toMatch(/^\d+\.\d+\.\d+-js\.\d+$/);
-  const out = contextOut({ checked: Date.now(), latest: npm }, { CLAUDE_CODE_ENTRYPOINT: "cli" });
-  expect(out.systemMessage).toBeUndefined();
-  expect(out.hookSpecificOutput.additionalContext).toBe(SESSION_CONTEXT);
-});
-
-test("context: CHEAPAG_NO_UPDATE_CHECK=1 skips the check even when the cache has a newer minor", () => {
-  const [major, minor] = npm.split(".").map(Number);
-  const out = contextOut({ checked: Date.now(), latest: `${major}.${minor + 1}.0` }, { CHEAPAG_NO_UPDATE_CHECK: "1", CLAUDE_CODE_ENTRYPOINT: "cli" });
-  expect(out.systemMessage).toBeUndefined();
-  expect(out.hookSpecificOutput.additionalContext).toBe(SESSION_CONTEXT);
+test("update checks are opt-in and never direct fork users to upstream npm", () => {
+  const out = contextOut({ CHEAPAG_UPDATE_CHECK: "1" });
+  expect(JSON.parse(out).systemMessage).toContain("Review the fork release notes");
+  expect(out).not.toContain("npx"); expect(out).not.toContain("additionalContext");
+  expect(contextOut({ CHEAPAG_UPDATE_CHECK: "1", CHEAPAG_NO_UPDATE_CHECK: "1" })).toBe("");
 });
 
 const FAIL_BLOCK = "FAIL jab12 step=1 files=0 +0/-0 tests=pass turns=12 cost=$0.003\nfound: django/db/models/query.py:only(), proxy model pk\nreason: no reproduction test by turn 12";
 const read = { file_path: "a.ts" };
+
+test("a guard setting alone, stale prompt, or absent prompt never redirects unrelated work", () => {
+  const { cli, run, result, repo } = setup(); cli("on");
+  expect(run("Write", { file_path: "a.ts", content: lines(50) })).toBeNull();
+  result("OK jab12 step=1 files=0 tests=none");
+  expect(run("Write", { file_path: "a.ts", content: lines(50) })).toMatch(/Large edit/);
+  expect(run("Write", { file_path: "a.ts", content: lines(50) }, { prompt: "new" })).toBeNull();
+  expect(run("Write", {}, { stdin: JSON.stringify({ session_id: "s1", cwd: repo.dir, tool_name: "Write", tool_input: { file_path: "a.ts", content: lines(50) } }) })).toBeNull();
+});
+
+test("explicit tool roots are recorded there and multi-repository patches count only after every guard passes", () => {
+  const { repo, env } = setup(); const other = tempRepo(); onTestFinished(other.cleanup);
+  const call = (action: string, input: object) => spawnSync(process.execPath, [serverEntry, "hook", action], { cwd: repo.dir, env, input: JSON.stringify(input), encoding: "utf8" }).stdout;
+  for (const root of [repo.dir, other.dir]) {
+    mkdirSync(join(root, ".cheapag"), { recursive: true }); writeFileSync(join(root, ".cheapag/hook.json"), "{}");
+    call("result", { session_id: "s", prompt_id: "p", cwd: repo.dir, tool_name: "mcp__cheapag__delegate", tool_input: { root }, tool_response: "OK jab12 step=1 files=0 tests=none" });
+  }
+  const input = (command: string) => ({ session_id: "s", prompt_id: "p", cwd: join(repo.dir, ".."), tool_name: "apply_patch", tool_input: { command } });
+  const small = addFile(join(repo.dir, "a.ts"), 1);
+  expect(call("guard", input(applyPatch(small, addFile(join(other.dir, "b.ts"), 50))))).toContain("Large edit");
+  expect(call("guard", input(applyPatch(small)))).toBe("");
+  expect(call("guard", input(applyPatch(small)))).toBe("");
+  expect(call("guard", input(applyPatch(small)))).toContain("3rd edit");
+  const foreign = { ...input(applyPatch(addFile(join(other.dir, "b.ts"), 50))), session_id: "other-session" };
+  expect(call("guard", foreign)).toBe("");
+});
 
 test("takeover: a PROVIDER result starts no take-over: the provider is down, so Claude must not hand it to Sonnet", () => {
   const { run, result } = setup();

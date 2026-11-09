@@ -105,8 +105,7 @@ Mapping:
   cap and repro check work unchanged and `events.jsonl` keeps the raw event.
 - The run's last `agent_message` is `text`; `finishReport` parses its `cheapag-result` block.
 - `turn.completed.usage` accumulates: input = `input_tokens - cached_input_tokens`, cacheRead = cached, output,
-  reasoning. **Cost is 0**: on a ChatGPT plan Codex reports no price, and an API-key price would be a guess. The
-  turn and minute caps still apply; the cost cap never trips. `spend` records `codex/<model>: 0`, which the ledger skips.
+  reasoning. **Cost is unknown**: Codex reports no price. Numeric `costUsd: 0` is retained with `costSource: unknown` and `costIncomplete: true`; it does not mean free usage. Turn and minute caps still apply; dollar caps can only enforce known amounts. The ledger retains the incomplete coverage.
 - `turn.failed`/`error` → `error`. A message naming a usage or rate limit becomes `limit`, which the job (no fallbacks)
   reports as `BUDGET: Codex usage limit for <model>: <message>`.
 - Exit without `turn.completed` → `error: codex exited with code N: <last stderr line>`.

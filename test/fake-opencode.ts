@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { dirname, join } from "node:path";
 import { OPENCODE_PIN } from "../src/opencode.js";
+import { ROLES } from "../src/routing.js";
 
 /**
  * A scriptable stand-in for `opencode serve`: the single substitution boundary in the test strategy.
@@ -28,6 +29,7 @@ export type Action =
   | { tool: string; input?: Record<string, unknown>; output?: string; error?: string }
   /** Adds to the current model step's assistant message; emits `message.updated` with that message's running totals. */
   | { usage: Usage }
+  | { missingTokens: true }
   /** Assistant text, e.g. a fenced `cheapag-result` block. */
   | { text: string }
   /** Asks via the question tool, then pauses until Cheap Agent replies or rejects. */
@@ -196,6 +198,8 @@ export async function startFakeOpencode(opts: { version?: string; providers?: Fa
       } else if ("tool" in action) {
         part(toolPart(run, action.tool, action.input ?? {}, action.output, action.error));
         nextStep(run);
+      } else if ("missingTokens" in action) {
+        emit(dir, "message.updated", { sessionID: session.id, info: { ...assistantMessage(run), tokens: undefined, cost: undefined } });
       } else if ("usage" in action) {
         for (const key of ["cost", "input", "output", "reasoning"] as const) run.usage[key] += action.usage[key] ?? 0;
         emit(dir, "message.updated", { sessionID: session.id, info: assistantMessage(run) });
@@ -272,7 +276,25 @@ export async function startFakeOpencode(opts: { version?: string; providers?: Fa
 
     if (route === "GET /global/health") return json(res, { healthy: true, version });
 
-    if (route === "GET /config/providers") return json(res, catalogOf(opts.providers ?? DEFAULT_PROVIDERS));
+    if (route === "GET /config/providers") {
+      const providers = structuredClone(opts.providers ?? DEFAULT_PROVIDERS);
+      if (!opts.providers && sessions.size) for (const [id, roles] of Object.entries(ROLES)) {
+        let provider = providers.find(p => p.id === id);
+        if (!provider) { provider = { id, models: [] }; providers.push(provider); }
+        for (const model of [...roles.implement, ...roles.research, roles.escalation]) {
+          if (!provider.models.some(m => m.id === model)) provider.models.push({ id: model, name: model, toolcall: true, input: 0, output: 0, context: 128000 });
+        }
+      }
+      // Fake sessions are deliberately priced at known zero unless a test supplies its own catalog.
+      if (!opts.providers) for (const session of sessions.values()) {
+        const model = session.model;
+        if (!model || model.providerID === "local") continue;
+        let provider = providers.find(p => p.id === model.providerID);
+        if (!provider) { provider = { id: model.providerID, models: [] }; providers.push(provider); }
+        if (!provider.models.some(m => m.id === model.id)) provider.models.push({ id: model.id, name: model.id, toolcall: true, input: 0, output: 0, context: 128000 });
+      }
+      return json(res, catalogOf(providers));
+    }
 
     if (route === "GET /event") {
       res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });

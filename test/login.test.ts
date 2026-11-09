@@ -457,6 +457,8 @@ test("the launcher gates the guard hook itself: nothing without the repo flag, a
 
   mkdirSync(join(repo.dir, ".cheapag"), { recursive: true });
   writeFileSync(join(repo.dir, ".cheapag", "hook.json"), JSON.stringify({ on: true }) + "\n");
+  mkdirSync(join(repo.dir, ".cheapag/hook"), { recursive: true });
+  writeFileSync(join(repo.dir, ".cheapag/hook/s1.takeover.json"), JSON.stringify({ prompt: "p1", delegated: true, calls: 0 }));
   const on = spawnSync(process.execPath, [launcher, "hook", "guard"], { cwd: repo.dir, env, input, encoding: "utf8" });
   expect(on.status).toBe(0);
   expect(JSON.parse(on.stdout).hookSpecificOutput).toMatchObject({ hookEventName: "PreToolUse", permissionDecision: "deny" }); // the real guard ran through the import

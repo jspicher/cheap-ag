@@ -55,7 +55,7 @@ test("the MCP entry and every command run exactly this package version, so the p
 test("skills: plan-writing for Claude; status, and user-only allow, clean and hook wrapping the CLI", () => {
   expect(readdirSync(join(plugin, "skills")).sort()).toEqual(["allow", "clean", "hook", "model", "plan-writing", "provider", "status"]);
   const plan = skill("plan-writing");
-  expect(plan.front["disable-model-invocation"]).toBeUndefined(); // Claude loads it when planning
+  expect(plan.front["disable-model-invocation"]).toBe("true"); // Claude loads it when planning
   expect(plan.front.description).toMatch(/plan/i);
   for (const rule of ["files:", "done-when:", "dont:", "needs:", "deps:", "## 1 ", "Size", "Grouping", "Packages", "never the whole suite"]) expect(plan.body).toContain(rule);
   for (const rule of ["Trust OK", "After a FAIL"]) expect(plan.body).not.toContain(rule); // the rules live in the server instructions only
@@ -67,7 +67,7 @@ test("skills: plan-writing for Claude; status, and user-only allow, clean and ho
   expect(model.front["allowed-tools"]).toBe(`Bash(${pin} model) Bash(${pin} model *)`);
   expect(model.body).toContain("For more models, exit Claude/Codex and run: npx cheap-agent model");
   const status = skill("status");
-  expect(status.front["disable-model-invocation"]).toBeUndefined();
+  expect(status.front["disable-model-invocation"]).toBe("true");
   expect(status.body).toContain(`!\`${pin} status\``);
   expect(status.front["allowed-tools"]).toBe(`Bash(${pin} status)`);
   // Claude must never approve consent, delete worktrees, switch off its own edit guard or switch provider: only the developer can invoke these
@@ -82,7 +82,7 @@ test("skills: plan-writing for Claude; status, and user-only allow, clean and ho
 
 test("skills work in Codex: user-only skills stay implicit-off, and every npx line has a manual fallback", () => {
   // Codex's equivalent of disable-model-invocation: true, so its model never starts these on its own
-  for (const name of ["allow", "clean", "hook", "model", "provider"]) {
+  for (const name of ["allow", "clean", "hook", "model", "provider", "status", "plan-writing"]) {
     expect(readFileSync(join(plugin, "skills", name, "agents", "openai.yaml"), "utf8")).toContain("allow_implicit_invocation: false");
   }
   // Codex does not run the !`...` line, so the body must tell its model to run the command once
@@ -100,7 +100,7 @@ test("the guard hooks: PreToolUse on every tool behind a shell test that skips n
   // ticket 29: every tool, since the take-over budget counts Reads and Bash too
   expect(hooks.hooks.PreToolUse).toEqual([{ matcher: "*", hooks: [{ type: "command", command: expect.any(String), timeout: expect.any(Number) }] }]);
   const { command } = hooks.hooks.PreToolUse[0].hooks[0];
-  expect(command).toBe(`r=$(git rev-parse --show-toplevel 2>/dev/null) && { [ -f "$r/.cheapag/hook.json" ] || [ -f "$r/.cheapag/hook/takeover" ]; } && npx -y cheap-agent@${npm} hook guard; exit 0`);
+  expect(command).toBe(`npx -y cheap-agent@${npm} hook guard; exit 0`);
   expect(hooks.hooks.PostToolUse).toEqual([{ matcher: "mcp__.*cheapag__(delegate|jobs|reply|land)", hooks: [{ type: "command", command: `npx -y cheap-agent@${npm} hook result; exit 0`, timeout: expect.any(Number) }] }]);
 });
 

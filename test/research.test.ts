@@ -10,6 +10,41 @@ import * as routing from "../src/routing.js";
 import * as worker from "../src/worker.js";
 import * as workspace from "../src/workspace.js";
 import { BRIEF_FORMAT, REPRO_RULE, refTokens, research as runResearch } from "../src/research.js";
+import { verifyRepro } from "../src/research.js";
+import * as fs from "node:fs";
+
+test("research verifies exact completed commands, preserving quoted and argument whitespace", () => {
+  const answer = (repro: string) => ({ status: "ANSWER" as const, answer: "claim", refs: [], repro, confidence: "high" as const });
+  expect(verifyRepro(answer('`echo "a  b"` → claimed output'), ['echo "a b"'])?.reproStatus).toBe("unverified");
+  expect(verifyRepro(answer('`npm test` → claimed output'), ['npm test -- foo'])?.confidence).toBe("low");
+  expect(verifyRepro(answer('`npm  test` → claimed output'), ['npm test'])?.reproStatus).toBe("unverified");
+  expect(verifyRepro(answer('`npm test` → claimed output'), [])?.reproStatus).toBe("unverified");
+  expect(verifyRepro(answer('`npm test` → claimed output'), [' \r\nnpm test\r\n']) ).toMatchObject({ repro: "npm test", reproOutcome: "claimed output", reproStatus: "verified" });
+  expect(REPRO_RULE).toContain("ignored or unlinked files");
+});
+
+test.each(["session", "persistence"])("research releases timers and OpenCode holds after %s failure", async phase => {
+  const repo = tempRepo(); onTestFinished(repo.cleanup);
+  onTestFinished(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+  vi.spyOn(consent, "consentGate").mockReturnValue({ route: routing.fullRoute("opencode-go") });
+  const release = vi.fn(); vi.spyOn(opencode, "holdOpencode").mockReturnValue(release);
+  vi.spyOn(worker, "openSession").mockRejectedValue(new Error("session creation failed"));
+  vi.spyOn(worker, "releaseDirectory").mockResolvedValue();
+  if (phase === "persistence") vi.spyOn(opencode, "holdOpencode").mockImplementation(() => {
+    const jobs = join(repo.dir, ".cheapag/jobs");
+    mkdirSync(join(jobs, fs.readdirSync(jobs)[0], "request.json"));
+    return release;
+  });
+  vi.useFakeTimers();
+  const run = runResearch({ question: "q", root: repo.dir }, {
+    provider: { provider: "opencode-go", via: "login" },
+    opencode: async () => ({ url: "http://unused.invalid", password: "unused", version: "test" }), progress: () => {},
+  });
+  if (phase === "session") expect(await run).toContain("session creation failed");
+  else await expect(run).rejects.toThrow(/EISDIR|EPERM|directory/i);
+  expect(release).toHaveBeenCalledTimes(1);
+  expect(vi.getTimerCount()).toBe(0);
+});
 import { startFakeOpencode, type Action } from "./fake-opencode.js";
 import { callText, removeDir, slow, startServer, tempRepo, type Logins } from "./harness.js";
 
@@ -291,7 +326,7 @@ test("a scout brief: ranked files, a reproduction the worker ran, dead ends, not
   const text = await research({ question: "why does the expiry test fail?" });
   expect(text.split("\n").slice(1, 6)).toEqual([
     "files: src/auth.ts:18-22, src/app.ts:1",
-    "repro: `pytest tests/test_auth.py -k expiry` → 1 failed: TokenExpiredError not caught",
+    "repro: verified execution: `pytest tests/test_auth.py -k expiry` → 1 failed: TokenExpiredError not caught",
     "dead ends: the middleware order is fine",
     "notes:",
     "the expiry check runs after decoding",
@@ -307,7 +342,7 @@ test("a claimed reproduction the worker never ran is marked unverified and drops
   expect(text).not.toContain("dead ends:"); // "none" is not shown
   expect(text).toContain("\nconfidence: low\n");
   fake.script(block("status: answer\nconfidence: medium\nrepro: not attempted\nnotes: read only"));
-  expect(await research({ question: "where is it?" })).toMatch(/\nrepro: not attempted\n[\s\S]*\nconfidence: medium\n/);
+  expect(await research({ question: "where is it?" })).toMatch(/\nnotes:\nread only\nconfidence: medium\n/);
 });
 
 test("a turn cap recovers what the worker read: one no-tool prompt, rendered as ANSWER status=partial; other failures stay FAIL", async () => {

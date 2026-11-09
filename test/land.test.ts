@@ -207,3 +207,6 @@ test("two server processes on one repository wait for the lock and land one at a
   expect(readFileSync(inRepo("b.txt"), "utf8")).toBe("b\n");
   expect(readdirSync(inRepo(".cheapag")).filter((f) => f.startsWith("land.lock"))).toEqual([]);
 });
+
+// Stale stat and assume-unchanged coverage is part of the focused landing suite.
+import "./stale-index.test.js";

@@ -1,0 +1,28 @@
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { expect, onTestFinished, test, vi } from "vitest";
+import { doctor } from "../src/doctor.js";
+import { writePlugin, installPaths } from "../src/install.js";
+import { hermeticHome, serverEntry, tempRepo } from "./harness.js";
+test("doctor inspects disabled, malformed and stale installs without mutation", () => {
+  const { home, env } = hermeticHome(); onTestFinished(() => rmSync(home, { recursive: true, force: true }));
+  const repo = tempRepo(); onTestFinished(repo.cleanup);
+  vi.stubEnv("HOME", home); vi.stubEnv("USERPROFILE", home); vi.stubEnv("CLAUDE_CONFIG_DIR", join(home, "claude"));
+  vi.stubEnv("XDG_CONFIG_HOME", env.XDG_CONFIG_HOME!); vi.stubEnv("CODEX_HOME", join(home, "codex")); onTestFinished(() => { vi.unstubAllEnvs(); });
+  mkdirSync(join(home, "codex"));
+  const config = join(home, "codex/config.toml");
+  writeFileSync(config, '[plugins."cheapag@cheapag"]\nenabled = false\n');
+  const output: string[] = [];
+  expect(doctor(["--client", "codex", "--repo", repo.dir], s => output.push(s))).toBe(0);
+  expect(output.join("\n")).toContain("disabled by choice");
+  const before = readFileSync(config);
+  writePlugin(serverEntry, process.execPath);
+  expect(doctor(["--client", "both", "--repo", repo.dir], () => {})).toBe(0);
+  expect(readFileSync(config)).toEqual(before);
+  writePlugin(join(home, "missing.js"), process.execPath);
+  expect(doctor(["--client", "codex", "--repo", repo.dir], () => {})).toBe(1);
+  writeFileSync(config, 'broken = [');
+  expect(doctor(["--client", "codex", "--repo", repo.dir], () => {})).toBe(1);
+  expect(readFileSync(config, "utf8")).toBe('broken = [');
+  expect(readFileSync(installPaths().launcher, "utf8")).toContain("missing.js");
+});
