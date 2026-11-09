@@ -45,6 +45,17 @@ node dist/index.js
 
 In an interactive terminal, the last command starts setup. Choose a provider and model preset, enter the key at the hidden prompt, and follow the Claude registration prompts. Setup generates a stable launcher and local plugin marketplace under `~/.config/cheapag/`. Keep the source checkout at its registered location: the launcher refers to its built runtime. XDG settings can relocate these paths.
 
+**npm 12 installation caveat:** On our Linux VM with npm 12.0.2, `npm ci` completed but blocked `opencode-ai`'s required postinstall script. If installation reports that warning, run the bundled script before setup, from the checkout root:
+
+```bash
+cd node_modules/opencode-ai
+node postinstall.mjs
+cd ../..
+npx --no-install opencode --version
+```
+
+This completes the worker binary installation without changing npm's global script policy. Repeat it after a fresh dependency installation if the script is blocked again.
+
 Hosted providers: OpenRouter, DeepSeek, OpenCode Go, Command Code, and OpenCode Zen. Custom OpenAI-compatible endpoints are also supported. **Login and provider switching perform live checks and may incur charges.** A key copied from 1Password is saved to OpenCode's local credential store; it is not a continuing link to the vault. Never put a key in chat or a command argument.
 
 Add another provider later with `node dist/index.js login`.
@@ -157,6 +168,14 @@ node test/packed-smoke.mjs
 ```
 
 The permission and worker-isolation tests run the real bundled OpenCode against a fake local model. Live provider calls are a separate check.
+
+**npm 12 smoke-test caveat:** On that VM, the packed smoke test failed while reading npm's pack result (`Cannot read properties of undefined (reading 'filename')`), before testing the installed CLI. The same test passed using npm 11. Until the harness supports that npm 12 behavior, run this from the checkout root:
+
+```bash
+npm exec --yes --package=npm@11 -- node test/packed-smoke.mjs
+```
+
+This uses npm 11 temporarily without replacing the system npm. It may download npm 11; the smoke test uses a temporary home and makes no provider calls.
 
 Update this fork from its Git repository, rebuild, regenerate the installed plugin, and refresh the host's cached plugin. Do not use `npx cheap-agent@latest` to update this fork: that selects upstream. Runtime hints print an absolute command for this build; generated skills use the installed launcher. If the runtime disappears, the launcher reports an error instead of substituting upstream. Restart into a new conversation after installation changes. Updating source or `dist/` alone does not refresh cached skill files or an already-running MCP server.
 
