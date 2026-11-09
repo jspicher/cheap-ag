@@ -247,10 +247,10 @@ tty("the plugin is generated from the package: hooks and commands call the launc
   const launcher = readFileSync(r.launcher, "utf8");
   expect(launcher).toContain(JSON.stringify(serverEntry));
   expect(launcher).toMatch(/npx -y cheap-agent@\d+\.\d+\.\d+/);
-  expect(launcher).toContain('process.argv[2] === "hook" && process.argv[3] === "guard"');
+  expect(launcher).not.toContain("rev-parse"); // target resolution belongs to the hook, not the launcher cwd
   expect(launcher).toContain("pathToFileURL");
   const context = await promisify(execFile)(process.execPath, [r.launcher, "hook", "context"], { encoding: "utf8" });
-  expect(context.stdout).toContain('"hookEventName":"SessionStart"');
+  expect(context.stdout).toBe("");
 }, slow(90_000));
 
 tty("re-running setup updates the plugin it installed; a failed plugin step prints the commands to run", async () => {
