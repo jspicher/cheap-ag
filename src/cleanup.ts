@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { loadConfig, type Config } from "./config.js";
 import { redact } from "./credentials.js";
 import { recoverJobs } from "./jobs.js";
-import { isAlive, removeLink } from "./platform.js";
+import { isAlive, removeDirectory, removeLink } from "./platform.js";
 import { git, projectRoot } from "./workspace.js";
 
 /**
@@ -65,7 +65,7 @@ export function cleanup(root: string, retention: Config["retention"], linkDirs: 
       try {
         git(root, ["worktree", "remove", "--force", path]);
       } catch {
-        rmSync(path, { recursive: true, force: true }); // git no longer knows it; rm never follows symlinks
+        removeDirectory(path); // git no longer knows it; removal never follows symlinks
       }
       removedTree = true;
       out.removed.push(`worktree ${id}: ${opts.all ? "--all" : `unlanded, ${days(j.since)}d old`}`);
@@ -80,7 +80,7 @@ export function cleanup(root: string, retention: Config["retention"], linkDirs: 
     else if (realDir(join(treesDir, id))) out.kept.push(`job ${id}: its worktree is kept`);
     else if (!old(j.since, retention.job_log_days)) out.kept.push(`job ${id}: ${days(j.since)}d old, kept ${retention.job_log_days}d`);
     else {
-      rmSync(join(jobsDir, id), { recursive: true, force: true });
+      removeDirectory(join(jobsDir, id));
       out.removed.push(`job ${id}: ${opts.all ? "--all" : `${days(j.since)}d old`}`);
     }
   }

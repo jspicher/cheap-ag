@@ -3,7 +3,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { copyFileSync, cpSync, existsSync, linkSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { isAlive, link, normalisePath, removeLink } from "./platform.js";
+import { isAlive, link, normalisePath, removeDirectory, removeLink } from "./platform.js";
 
 /** Workspace (ADR-0003): baseline, worktree per job, diff, and landing; the only writer to the user's tree. */
 
@@ -96,9 +96,8 @@ function discard(root: string, path: string, links: string[]) {
     git(root, ["worktree", "remove", "--force", path]);
   } catch {
     // git no longer knows it (pruned by hand): rm never follows symlinks.
-    // OpenCode releases a disposed directory's handles asynchronously, and Windows refuses to
-    // delete a directory that is still open; rmSync only retries EBUSY/EPERM-type errors.
-    rmSync(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    // OpenCode releases a disposed directory's handles asynchronously.
+    removeDirectory(path);
     git(root, ["worktree", "prune"]);
   }
 }

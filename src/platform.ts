@@ -1,5 +1,5 @@
 import { spawnSync, type SpawnSyncOptions, type SpawnSyncOptionsWithBufferEncoding, type SpawnSyncOptionsWithStringEncoding, type SpawnSyncReturns } from "node:child_process";
-import { existsSync, lstatSync, readdirSync, symlinkSync, unlinkSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, rmSync, symlinkSync, unlinkSync } from "node:fs";
 import { delimiter, dirname, join, sep } from "node:path";
 
 /**
@@ -18,6 +18,24 @@ export function removeLink(path: string) {
     if (lstatSync(path).isSymbolicLink()) unlinkSync(path);
   } catch {
     // already gone
+  }
+}
+
+/** Remove an owned directory without following links, tolerating briefly held Windows handles.
+ * Node's native rmSync can throw EPERM before applying its maxRetries option. Retry at this
+ * boundary instead; ten increasing delays bound the wait to eleven seconds. Permanent errors
+ * still reach the caller, so successful work and failed cleanup remain separate outcomes.
+ */
+export function removeDirectory(path: string) {
+  const retryable = new Set(["EBUSY", "EPERM", "ENOTEMPTY", "EMFILE", "ENFILE"]);
+  for (let attempt = 0; ; attempt++) {
+    try {
+      rmSync(path, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      if (attempt === 10 || !retryable.has((error as NodeJS.ErrnoException).code ?? "")) throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200 * (attempt + 1));
+    }
   }
 }
 

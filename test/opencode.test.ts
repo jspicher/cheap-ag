@@ -206,7 +206,7 @@ test("boots the bundled OpenCode lazily on localhost, restarts it after a crash,
   }
 
   const configDir = join(server.home, ".cheapag", "opencode");
-  expect(readdirSync(configDir).sort()).toEqual(["agents", "node_modules", "opencode.json", "package-lock.json", "plugins", "tools"]);
+  expect(readdirSync(configDir).sort()).toEqual(["agents", "isolated-config", "node_modules", "opencode.json", "package-lock.json", "plugins", "tools"]);
 
   // a crashed OpenCode is replaced on the next call, not reused
   // a crashed OpenCode: kill its whole process group (Windows: the top process alone leaves its children holding the server home)

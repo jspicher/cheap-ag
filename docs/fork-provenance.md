@@ -15,3 +15,12 @@ Version remains `1.3.2-js.1`. These are focused adaptations, not wholesale merge
 Task-kind precedence and cost provenance extend these adaptations without changing existing deadline or reproduction mechanics. `feature` aliases `change`; explicit model selections remain attached to deferred repairs. Older result records remain readable.
 
 Antigravity, BigModel, Z.ai Coding Plan, Cheaper Inference and cheapaimodel integrations remain deferred. This integration does not publish a package, reinstall the active plugin, or perform paid provider tests. Rollback uses revert commits.
+
+## Live-test follow-ups
+
+The November 8 Claude smoke test exposed two independent issues addressed locally in this fork:
+
+- OpenCode's global RTK plugin rewrote allowed `git diff` calls to `rtk git diff` before permission evaluation. `OPENCODE_CONFIG_DIR` adds a config layer rather than excluding global config. Worker startup now isolates XDG config and home-level config discovery and clears inherited explicit config selectors, while retaining the shared credential data store and endpoint key environment. See OpenCode 1.19.0's [configuration paths](https://github.com/anomalyco/opencode/blob/v1.19.0/packages/opencode/src/config/paths.ts). A fake-provider regression uses a real OpenCode server and deliberately conflicting global plugins.
+- Windows directory handles caused `EPERM` during final removal. A real child-process cwd reproduced Node's native `rmSync` returning immediately despite `maxRetries`. Worktree finalization and retention cleanup now retry transient removal errors explicitly, bounded to eleven seconds of waiting. Persistent errors remain visible; there is no forced handle closure or process termination. Regression tests exercise real Windows locks, retry exhaustion, and non-transient errors.
+
+The main README now describes this fork and its seven explicitly invoked skills instead of presenting upstream installation and marketing as fork behavior.
