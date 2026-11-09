@@ -2,7 +2,7 @@ import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from "node
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { describe, presetHere, readConsent, readEngines, routeMoved } from "./consent.js";
+import { endpointMoved, describe, presetHere, readConsent, readEngines, routeMoved } from "./consent.js";
 import { detectProvider, LOGIN_COMMAND, providerLabel, redact } from "./credentials.js";
 import { blockedFor, records } from "./jobs.js";
 import { isAlive } from "./platform.js";
@@ -36,6 +36,7 @@ export function status(args: string[]): number {
     const consent = readConsent(root);
     out(`consent: ${!consent ? "not given; run /cheapag:allow"
       : consent.provider !== provider ? `given for ${providerLabel(consent.provider)}, not the current provider; run /cheapag:allow`
+      : endpointMoved(consent) ? "destination changed or legacy endpoint consent; renew with cheapag allow"
       : routeMoved(root, consent) ? "given for other worker models (preset or models changed); run /cheapag:allow"
       : `${describe(consent)} (since ${consent.approvedAt.slice(0, 10)})`}`);
     const codex = readEngines(root).codex;
@@ -62,8 +63,9 @@ export function status(args: string[]): number {
   const spend = spendWindows();
   out(spend.length ? "spend (tracked on this machine, all repos; Go windows where capped):" : "spend: none tracked in the last 30 days");
   for (const { model, windows } of spend) {
-    out(`  ${model}  ${windows.map((w) => `${w.window} $${w.spent.toFixed(2)}${w.capUsd ? `/$${w.capUsd.toFixed(2)} (${Math.round((w.spent / w.capUsd) * 100)}%)` : ""}`).join("  ")}`);
+    out(`  ${model}  ${windows.map((w) => `${w.window} ${w.costSource === "unknown" ? "unknown" : `$${w.spent.toFixed(2)}`}${w.costIncomplete ? " (incomplete)" : w.costSource === "configured" ? " (estimate)" : ""}${w.capUsd ? `/$${w.capUsd.toFixed(2)} (${Math.round((w.spent / w.capUsd) * 100)}%)` : ""}`).join("  ")}`);
   }
+  if (spend.some(s => s.windows.some(w => w.costIncomplete))) out("Unknown pricing prevents a complete dollar cap; known spend, time and turn caps still apply.");
   return 0;
 }
 

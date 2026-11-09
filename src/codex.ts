@@ -147,7 +147,7 @@ export async function openCodexSession(opts: {
   const { directory } = opts;
   let thread: string | undefined;
   let turns = 0;
-  const usage: Usage = { inputTokens: 0, outputTokens: 0, reasoningTokens: 0, cacheRead: 0, cacheWrite: 0, costUsd: 0 };
+  const usage: Usage = { inputTokens: 0, outputTokens: 0, reasoningTokens: 0, cacheRead: 0, cacheWrite: 0, costUsd: 0, costSource: "unknown", costIncomplete: true };
   const models = new Set<string>();
 
   async function run(prompt: string, model?: WorkerModel, interrupt?: AbortSignal, afterStop = false): Promise<RunResult> {
@@ -232,7 +232,7 @@ export async function openCodexSession(opts: {
   }
 
   function totals(): SessionTotals {
-    // a ChatGPT plan has no per-call price, so Codex usage costs $0 here (docs/codex-worker.md); the ledger skips it
+    // Codex reports no per-call price; retain numeric zero with unknown provenance, never claim free usage
     return { sessionID: thread ?? "", turns, usage: { ...usage }, rejections: [], spend: Object.fromEntries([...models].map((m) => [m, 0])) };
   }
 

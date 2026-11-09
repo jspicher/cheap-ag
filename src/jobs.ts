@@ -42,11 +42,16 @@ const ESC_TURNS = 15;
 /** Fail fast applies only to fixes (ticket 37): a step or source naming any of these is a bug to reproduce first. */
 const FIX_WORDS = /\b(bug|fix(?:es|ed|ing)?|fail(?:s|ed|ing|ure)?|error|crash(?:es|ed)?|regress(?:ion|ed)?|broken|incorrect|wrong|traceback|exception)\b/i;
 
+export function effectiveKind(step: PlanStep, callKind?: "fix" | "change" | "feature", source = ""): "fix" | "change" {
+  const kind = step.fields.kind ?? callKind;
+  return kind ? kind === "fix" ? "fix" : "change" : FIX_WORDS.test(`${step.title} ${step.fields.do ?? ""} ${source}`) ? "fix" : "change";
+}
+
 /**
  * `brief`: a research scout brief (ticket 23.4), resolved to its text, handed to every worker of the delegation.
  * `source`: the user's request or the issue, verbatim (ticket 28), so the worker can check the step against it.
  */
-export type DelegateInput = { plan: string; steps: string; note?: string; wait?: boolean; brief?: string; source?: string; difficulty?: Difficulty; model?: string };
+export type DelegateInput = { plan: string; steps: string; note?: string; wait?: boolean; brief?: string; source?: string; difficulty?: Difficulty; kind?: "fix" | "change" | "feature"; model?: string };
 /** What the tool takes: a plan file and steps, or (one step, no plan file) an inline task with optional files and done-when. */
 export type DelegateRequest = Partial<DelegateInput> & { task?: string; files?: string; done_when?: string; root?: string; model?: string };
 
@@ -122,8 +127,8 @@ export async function delegate(req: DelegateRequest, ctx: WorkerContext): Promis
   if (req.task !== undefined) {
     const made = inlinePlan(root, req);
     if ("fail" in made) return failBlock(made.fail);
-    input = { plan: made.plan, steps: "1", note: req.note, wait: req.wait, brief: brief.text, source, difficulty: req.difficulty, model: req.model };
-  } else if (req.plan && req.steps) input = { plan: req.plan, steps: req.steps, note: req.note, wait: req.wait, brief: brief.text, source, difficulty: req.difficulty, model: req.model };
+    input = { plan: made.plan, steps: "1", note: req.note, wait: req.wait, brief: brief.text, source, difficulty: req.difficulty, model: req.model, kind: req.kind };
+  } else if (req.plan && req.steps) input = { plan: req.plan, steps: req.steps, note: req.note, wait: req.wait, brief: brief.text, source, difficulty: req.difficulty, model: req.model, kind: req.kind };
   else return failBlock("give task (what to change, files, how to check), or plan and steps");
   // only the caller's path: an inline task's own plan lives under .cheapag/plans/
   if (req.task === undefined && input.plan.split(/[\\/]/).filter((p) => p && p !== ".")[0] === ".cheapag") return failBlock(`plan ${input.plan} is under .cheapag/, Cheap Agent's state folder, which workers cannot see; save plans under .plan/`);
@@ -159,16 +164,18 @@ export async function delegate(req: DelegateRequest, ctx: WorkerContext): Promis
   const picked = req.model === undefined ? undefined : modelName(route.implement);
   const opencode = codex ? undefined : await ctx.opencode(opencodeRoute(gate.route, route), picked);
   const release = codex ? () => {} : holdOpencode();
-  const shared = { root, input, plan, config, route, opencode, provider: ctx.provider, progress: ctx.progress, picked };
-  // wait=false: every group is RUNNING the moment it is created
-  if (groups.length === 1) {
-    const one = runGroup({ ...shared, group: groups[0], batch: null });
-    void one.done.finally(release);
-    return input.wait === false ? renderJob(one.record()) : one.outcome;
-  }
-  const run = runBatch(groups, shared);
-  void run.all.catch(() => {}).finally(release);
-  return input.wait === false ? run.render() : run.look(false, ctx.progress);
+  try {
+    const shared = { root, input, plan, config, route, opencode, provider: ctx.provider, progress: ctx.progress, picked };
+    // wait=false: every group is RUNNING the moment it is created
+    if (groups.length === 1) {
+      const one = runGroup({ ...shared, group: groups[0], batch: null });
+      void one.done.finally(release);
+      return input.wait === false ? renderJob(one.record()) : one.outcome;
+    }
+    const run = runBatch(groups, shared);
+    void run.all.catch(() => {}).finally(release);
+    return input.wait === false ? run.render() : run.look(false, ctx.progress);
+  } catch (err) { release(); throw err; }
 }
 
 /**
@@ -201,7 +208,8 @@ type GroupRun = Shared & {
  */
 function runGroup(g: GroupRun) {
   const { root, input, plan, config, route, opencode } = g;
-  const steps = g.group.steps;
+  const steps = g.group.steps.map(s => input.kind === undefined || s.fields.kind ? s : { ...s, fields: { ...s.fields, kind: effectiveKind(s, input.kind, input.source) }, text: `${s.text}\nkind: ${effectiveKind(s, input.kind, input.source)}` });
+  const effectiveKinds = steps.map(s => g.fix ? "fix" : effectiveKind(s, input.kind, input.source));
   const cmds = g.fix ? [g.fix.cmd] : verifyCommands(steps.map((s) => s.fields["done-when"]), config.test_cmd);
   const { job, dir } = newJob(root);
   const write = (name: string, value: unknown) => writeWhole(join(dir, name), redact(typeof value === "string" ? value : JSON.stringify(value, null, 2) + "\n"));
@@ -212,7 +220,7 @@ function runGroup(g: GroupRun) {
   // against the implement model, so a tier model shows as model= in the headline
   const requested = modelName(route.implement);
   const startedAt = new Date();
-  write("request.json", { ...input, steps: stepIds, batch: g.batch, model: modelName(model), difficulty, startedAt });
+  write("request.json", { ...input, effectiveKinds, steps: stepIds, batch: g.batch, model: modelName(model), difficulty, startedAt });
   const elapsed = () => Math.round((Date.now() - startedAt.getTime()) / 1000);
 
   const escalation = route.escalation;
@@ -305,8 +313,7 @@ function runGroup(g: GroupRun) {
   // fail fast (ticket 28): a step with checks that has edited nothing by repro_by_turns stops now, so Claude takes over
   // without a 40-turn failed job in its context; any edit, source or test, lifts the stop and the job runs to its normal cap
   // ticket 37: only a fix has a bug to reproduce; a feature step is never stopped for lacking a test
-  const kind = steps.find((s) => s.fields.kind)?.fields.kind;
-  const isFix = g.fix || (kind ? kind === "fix" : FIX_WORDS.test([...steps.map((s) => `${s.title} ${s.fields.do ?? ""}`), input.source ?? ""].join("\n")));
+  const isFix = g.fix || effectiveKinds.includes("fix");
   let edited = false;
   let carried = new Set<string>(); // paths already dirty when the worktree opened (carried over from the repo): not the worker's edits
   const dirty = () => git(worktree!.path, ["status", "--porcelain"]).split("\n").map((l) => l.slice(3).trim()).filter(Boolean);
@@ -366,7 +373,7 @@ function runGroup(g: GroupRun) {
     // a failing check that could not run at all (missing tool, broken Node) reads as an environment failure, not bad code
     const env = failing ? envFailure(failing.run) : undefined;
     const record = {
-      format: "cheapag/1" as const, job, batch: g.batch, kind: g.fix ? "fix" : "implement", status, landed,
+      format: "cheapag/1" as const, job, batch: g.batch, kind: g.fix ? "fix" : "implement", effectiveKinds, status, landed,
       plan: input.plan, steps: stepIds, provider,
       // the server process running the job: a restart finds RUNNING/BLOCKED records whose pid is gone
       pid: process.pid,
@@ -637,7 +644,7 @@ function runGroup(g: GroupRun) {
     if (session) {
       // Go windows are per account: the user-wide ledger decides later escalations and shows balance use
       try {
-        recordSpend(session.totals().spend);
+        recordSpend(session.totals().spend, session.totals().usage);
         if (provider === "opencode-go" && usedBalance(session.totals().spend)) billing = "zen";
       } catch {
         // the ledger only steers later escalations: a write error (full disk, permissions) must not change this job's result
@@ -721,7 +728,7 @@ function runBatch(groups: Group[], shared: Shared) {
     const landed = ended.filter((r) => r.landed).map((r) => r.job); // in landing order: groups land in step order
     const { plan, steps } = shared.input;
     const endedAt = ended.length === groups.length ? new Date() : null;
-    writeWhole(join(dir, `${batch}.json`), redact(JSON.stringify({ ...record(), plan, steps, model: shared.picked, landed, startedAt, endedAt }, null, 2) + "\n"));
+    writeWhole(join(dir, `${batch}.json`), redact(JSON.stringify({ ...record(), plan, steps, kind: shared.input.kind, effectiveKinds: groups.map(g => g.steps.map(s => effectiveKind(s, shared.input.kind, shared.input.source))), model: shared.picked, landed, startedAt, endedAt }, null, 2) + "\n"));
   };
 
   // worker slots: held while a worker runs (BLOCKED included: its worktree and session stay live, and a reply resumes it at
@@ -1148,7 +1155,7 @@ export async function landJobs(input: LandInput, ctx: WorkerContext): Promise<st
 /** A settled batch, still pending, with nothing left to land: runs its integration check and returns the batch block. */
 async function integrateLater(root: string, config: Config, batch: string, ctx: WorkerContext) {
   const file = join(root, ".cheapag", "batches", `${batch}.json`);
-  let record: BatchRecord & Integration & { plan: string; steps: string; model?: string };
+  let record: BatchRecord & Integration & { plan: string; steps: string; model?: string; kind?: DelegateInput["kind"] };
   try {
     record = JSON.parse(readFileSync(file, "utf8"));
   } catch {
@@ -1179,7 +1186,7 @@ async function integrateLater(root: string, config: Config, batch: string, ctx: 
     const plan = parsePlan(readFileSync(join(root, record.plan), "utf8"));
     const opencode = codex ? undefined : await ctx.opencode(opencodeRoute(gate.route, chosen.route), record.model);
     if (!codex) release = holdOpencode();
-    return { root, input: { plan: record.plan, steps: record.steps, model: record.model }, plan, config, route: chosen.route, opencode, provider: ctx.provider, progress: ctx.progress, picked: record.model };
+    return { root, input: { plan: record.plan, steps: record.steps, model: record.model, kind: record.kind }, plan, config, route: chosen.route, opencode, provider: ctx.provider, progress: ctx.progress, picked: record.model };
   };
   try {
     await integrate(root, cmd, batch, record, jobRecords.map((r) => r!.landed), () => writeWhole(file, redact(JSON.stringify(record, null, 2) + "\n")), fixer, (run) => (fix = run));

@@ -1,3 +1,6 @@
+import { localServer } from "./config.js";
+import { messageCost, sumCosts, type Cost } from "./usage.js";
+import { runtimeError } from "./runtime-error.js";
 import { createOpencodeClient, type Event } from "@opencode-ai/sdk/v2";
 import { runningOpencode, type Opencode } from "./opencode.js";
 import { NO_SUMMARY } from "./report.js";
@@ -15,7 +18,7 @@ const ABORT_GRACE_MS = 10_000;
  * `disagree`: where the step's spec and the source it was given disagree, or `none` (ticket 28: a wrong spec is only visible to whoever has the source).
  */
 export type FinishReport = { summary: string; risks: string[]; review: string[]; missing: string[]; repro?: string; disagree?: string };
-export type Usage = { inputTokens: number; outputTokens: number; reasoningTokens: number; cacheRead: number; cacheWrite: number; costUsd: number };
+export type Usage = { inputTokens: number; outputTokens: number; reasoningTokens: number; cacheRead: number; cacheWrite: number; costUsd: number } & Cost;
 /** What one prompt of a session produced; `limit` when it was aborted on a provider limit, `httpStatus` of a provider error. */
 export type RunResult = { finish?: FinishReport; text: string; error?: string; limit?: Limit; httpStatus?: number; interrupted?: boolean };
 /** Session totals so far: turns and usage accumulate across every prompt of the session; `spend` is cost per model name. */
@@ -54,7 +57,16 @@ export async function openSession(opts: {
   const created = await client.session.create({
     directory, agent: opts.agent ?? WORKER_AGENT, model: { providerID: opts.model.providerID, id: opts.model.id }, ...(opts.permission && { permission: opts.permission }),
   });
-  if (!created.data) throw new Error(`could not create a worker session: ${JSON.stringify(created.error)}`);
+  if (!created.data) throw new Error(`could not create a worker session: ${runtimeError(created.error)}`);
+  const priced = new Set<string>();
+  // Local server metadata only: no provider request. A reported zero is meaningful only with usable pricing.
+  try {
+    const catalog = await client.config.providers({ directory }, { signal: AbortSignal.timeout(5000) });
+    for (const provider of catalog.data?.providers ?? []) for (const m of Object.values(provider.models)) {
+      if ([m.cost?.input, m.cost?.output].every(v => typeof v === "number" && Number.isFinite(v) && v >= 0)) priced.add(`${provider.id}/${m.id}`);
+    }
+  } catch { /* Missing metadata means unknown pricing, never a failed job. */ }
+  const local = opts.model.providerID === "local" ? localServer() : undefined;
   let sessionID = created.data.id;
   const calls = new Set<string>();
   const messages = new Map<string, Usage & { model: string }>(); // assistant message id → its model and latest running totals
@@ -92,7 +104,7 @@ export async function openSession(opts: {
         ...(model && { model: { providerID: model.providerID, modelID: model.id } }),
         ...(variant && { variant }),
       });
-      if (prompted.error) throw new Error(`could not prompt the worker: ${JSON.stringify(prompted.error)}`);
+      if (prompted.error) throw new Error(`could not prompt the worker: ${runtimeError(prompted.error)}`);
       // after the prompt, so an abort can never race ahead of it
       signal?.addEventListener("abort", stop, { once: true });
       if (signal?.aborted) stop();
@@ -124,8 +136,9 @@ export async function openSession(opts: {
           }
           messages.set(id, {
             model: `${providerID}/${modelID}`,
-            inputTokens: tokens.input, outputTokens: tokens.output, reasoningTokens: tokens.reasoning,
-            cacheRead: tokens.cache.read, cacheWrite: tokens.cache.write, costUsd: cost,
+            inputTokens: tokens?.input ?? 0, outputTokens: tokens?.output ?? 0, reasoningTokens: tokens?.reasoning ?? 0,
+            cacheRead: tokens?.cache?.read ?? 0, cacheWrite: tokens?.cache?.write ?? 0,
+            ...messageCost(providerID, cost, tokens?.input ?? 0, tokens?.output ?? 0, providerID === "local" && modelID === local?.model ? local.price : undefined, priced.has(`${providerID}/${modelID}`)),
           });
         } else if (event.type === "permission.asked") {
           // an unanswered ask blocks forever in server mode: reject every one, with a reason the worker sees
@@ -136,7 +149,7 @@ export async function openSession(opts: {
             .catch((err: Error) => ({ error: err.message }));
           // a reject that did not go through would leave the session blocked: end this run as a worker error instead
           if (replied.error) {
-            error ??= `could not reject a ${event.properties.permission} permission request: ${JSON.stringify(replied.error)}`;
+            error ??= `could not reject a ${event.properties.permission} permission request: ${runtimeError(replied.error)}`;
             break;
           }
         } else if (event.type === "question.asked") {
@@ -155,7 +168,7 @@ export async function openSession(opts: {
           ).catch((err: Error) => ({ error: err.message }));
           // an answer that did not go through would leave the session paused forever: end this run as a worker error instead
           if (replied.error) {
-            error ??= `could not answer the worker's question: ${JSON.stringify(replied.error)}`;
+            error ??= `could not answer the worker's question: ${runtimeError(replied.error)}`;
             break;
           }
           continue;
@@ -194,9 +207,10 @@ export async function openSession(opts: {
     const usage: Usage = { inputTokens: 0, outputTokens: 0, reasoningTokens: 0, cacheRead: 0, cacheWrite: 0, costUsd: 0 };
     const spend: Record<string, number> = {};
     for (const m of messages.values()) {
-      for (const key of Object.keys(usage) as (keyof Usage)[]) usage[key] += m[key];
+      for (const key of ["inputTokens", "outputTokens", "reasoningTokens", "cacheRead", "cacheWrite", "costUsd"] as const) usage[key] += m[key];
       spend[m.model] = (spend[m.model] ?? 0) + m.costUsd;
     }
+    Object.assign(usage, messages.size ? sumCosts([...messages.values()]) : { costSource: "unknown", costIncomplete: true });
     return { sessionID, turns: calls.size, usage, rejections: [...rejections], spend };
   }
 
@@ -267,9 +281,7 @@ function describeCall(input: Record<string, unknown>) {
   return String(input.command ?? input.filePath ?? input.url ?? input.pattern ?? JSON.stringify(input)).slice(0, 200);
 }
 
-function describe(err: unknown) {
-  const e = err as { name?: string; data?: { message?: string } } | undefined;
-  return e?.data?.message ?? e?.name ?? "unknown worker error";
+function describe(err: unknown) { return runtimeError(err);
 }
 
 /** The HTTP status of a provider error (APIError), e.g. OpenRouter's 402 for insufficient credits. */

@@ -1,3 +1,4 @@
+import { repositoryError } from "./repository-errors.js";
 import { execFileSync, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { copyFileSync, cpSync, existsSync, linkSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -20,8 +21,8 @@ export function projectRoot(cwd: string) {
   try {
     // resolved: git prints forward slashes on Windows (C:/x/y); path.* gives the platform's own separators
     return resolve(git(cwd, ["rev-parse", "--show-toplevel"]).trim());
-  } catch {
-    throw new Error(`${cwd} is not inside a git repository`);
+  } catch (err) {
+    throw repositoryError(cwd, err);
   }
 }
 
@@ -249,6 +250,9 @@ export function land(root: string, job: string, patch: string, paths: string[]):
       const tracked = new Set(git(root, ["ls-files", "-z", "--", ...paths.map(literal)], env).split("\0"));
       const present = paths.filter((p) => tracked.has(p) || existsSync(join(root, p)));
       if (present.length) git(root, ["add", "-A", "--", ...present.map(literal)], env);
+      // Force hashing in the disposable index even with stale stat data or assume-unchanged.
+      const existing = paths.filter((p) => lstatOf(join(root, p)) !== undefined);
+      if (existing.length) git(root, ["add", "--renormalize", "--", ...existing.map(literal)], env);
       const check = applyOutput(root, ["apply", "--3way", "--check", "-"], env, patch);
       // shortcut: `apply --3way --check` exits 0 even when it would leave conflict markers, so read its message; upgrade if git changes the wording
       if (check.failed || /with conflicts/.test(check.output)) return check.output.trim() || "patch does not apply";

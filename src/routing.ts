@@ -1,3 +1,4 @@
+import { type Cost, sumCosts } from "./usage.js";
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -261,8 +262,8 @@ const WINDOWS = [
  */
 export const ledgerFile = () => join(process.env.XDG_STATE_HOME || join(homedir(), ".local", "state"), "cheapag", "spend.jsonl");
 
-export function recordSpend(spend: Record<string, number>) {
-  const lines = Object.entries(spend).filter(([, cost]) => cost > 0).map(([m, costUsd]) => JSON.stringify({ at: new Date().toISOString(), model: m, costUsd }) + "\n");
+export function recordSpend(spend: Record<string, number>, provenance?: Cost) {
+  const lines = Object.entries(spend).filter(([, cost]) => cost > 0 || provenance?.costSource !== undefined).map(([m, costUsd]) => JSON.stringify({ at: new Date().toISOString(), model: m, costUsd, costSource: provenance?.costSource, costIncomplete: provenance?.costIncomplete }) + "\n");
   if (!lines.length) return;
   mkdirSync(dirname(ledgerFile()), { recursive: true });
   appendFileSync(ledgerFile(), lines.join(""));
@@ -287,18 +288,19 @@ export function spendWindows(now = Date.now()) {
     const windows = WINDOWS.map(({ name: window, ms, share }) => ({
       window,
       spent: ledger.filter((e) => e.model === model && now - e.at < ms).reduce((sum, e) => sum + e.costUsd, 0),
+      ...sumCosts(ledger.filter(e => e.model === model && now - e.at < ms)),
       capUsd: GO_CAPS[model] ? GO_CAPS[model] * share : undefined,
     }));
-    return windows.at(-1)!.spent > 0 ? [{ model, windows }] : [];
+    return (windows.at(-1)!.spent > 0 || windows.at(-1)!.costSource !== undefined) ? [{ model, windows }] : [];
   });
 }
 
-function readLedger(): { at: number; model: string; costUsd: number }[] {
+function readLedger(): ({ at: number; model: string } & Cost)[] {
   if (!existsSync(ledgerFile())) return [];
   return readFileSync(ledgerFile(), "utf8").split("\n").flatMap((line) => {
     try {
       const e = JSON.parse(line);
-      return typeof e.model === "string" && typeof e.costUsd === "number" ? [{ model: e.model, costUsd: e.costUsd, at: Date.parse(e.at) }] : [];
+      return typeof e.model === "string" && typeof e.costUsd === "number" ? [{ model: e.model, costUsd: e.costUsd, costSource: e.costSource, costIncomplete: e.costIncomplete, at: Date.parse(e.at) }] : [];
     } catch {
       return []; // a torn or damaged line only loses that entry
     }

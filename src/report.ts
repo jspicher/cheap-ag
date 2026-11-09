@@ -1,3 +1,4 @@
+import { renderCost, sumCosts, type Cost } from "./usage.js";
 import type { Changed } from "./workspace.js";
 
 /**
@@ -35,7 +36,7 @@ export type JobRecord = {
   worktree: string | null;
   /** Removing a landed job's worktree failed; the job's status is unaffected (its change already landed). */
   cleanupError?: string;
-  usage: { turns: number; costUsd: number };
+  usage: { turns: number; costUsd: number } & Cost;
   /** Absent when verification never ran: the headline then has no `tests=`. */
   tests?: "pass" | "fail" | "none";
   selfFix: number;
@@ -68,7 +69,7 @@ export type ResearchRecord = {
   /** An ANSWER recovered after a turn cap, or one the worker marked `status: partial`: what was found so far. */
   partial?: boolean;
   filesRead: number;
-  usage: { turns: number; costUsd: number };
+  usage: { turns: number; costUsd: number } & Cost;
   models?: { requested: string; final: string };
   /** Prose, may span lines (the brief's `notes:`). */
   answer: string;
@@ -76,6 +77,8 @@ export type ResearchRecord = {
   refs: Range[];
   /** The reproduction: the command run and what it showed, `unverified: …` when no such command ran, or "not attempted". */
   repro?: string;
+  reproStatus?: "not-attempted" | "verified" | "unverified";
+  reproOutcome?: string;
   deadEnds?: string;
   confidence?: "high" | "medium" | "low";
   reason?: string;
@@ -167,7 +170,7 @@ function layout(r: JobRecord, c: Cuts, compact = false) {
   const lines = [
     [
       r.status, r.job, `step=${r.steps}`, `files=${r.changed.length}`, `+${add}/-${del}`, r.tests && `tests=${r.tests}`, r.check && `check=${r.check}`,
-      `turns=${r.usage.turns}`, `cost=$${r.usage.costUsd.toFixed(3)}`,
+      `turns=${r.usage.turns}`, renderCost(r.usage),
       r.selfFix && `fix=${r.selfFix}`, r.models.escalated && "esc=1",
       r.models.final !== r.models.requested && `model=${r.models.final}`, r.redo && "redo=1", r.billing && `billing=${r.billing}`, r.repro && `repro=${r.repro}`, r.test && `test=${r.test}`,
     ].filter(Boolean).join(" "),
@@ -206,6 +209,7 @@ function layout(r: JobRecord, c: Cuts, compact = false) {
   if (has("missing") && r.missing.length) lines.push("missing:", ...r.missing.map((x) => `  - ${oneLine(x)}`));
   if (has("worktree") && r.worktree) lines.push(`worktree: ${r.worktree}/`);
   if (r.cleanupError) lines.push(`cleanup error: ${oneLine(r.cleanupError)} (the change landed; only its worktree folder was left behind)`);
+  if (r.usage.costIncomplete || r.usage.costSource === "unknown") lines.push("cost note: unknown pricing prevents a complete dollar cap; time and turn caps still apply");
   if (!compacted) lines.push(`log: .cheapag/jobs/${r.job}/`);
   return lines.map((l) => (keep.has(l) ? l.replaceAll("\t", "  ") : fit(l))).join("\n");
 }
@@ -214,13 +218,14 @@ function layout(r: JobRecord, c: Cuts, compact = false) {
 export function renderResearch(r: ResearchRecord) {
   const lines = [
     [
-      r.status, r.job, `files_read=${r.filesRead}`, `turns=${r.usage.turns}`, `cost=$${r.usage.costUsd.toFixed(3)}`,
+      r.status, r.job, `files_read=${r.filesRead}`, `turns=${r.usage.turns}`, renderCost(r.usage),
       r.models && r.models.final !== r.models.requested && `model=${r.models.final}`, r.partial && "status=partial",
     ].filter(Boolean).join(" "),
   ];
   // a scout brief (ticket 23.4): ranked files, the reproduction, dead ends, then the prose
   if (r.refs.length) lines.push(`files: ${r.refs.map((v) => `${v.path}:${v.start}${v.end !== v.start ? `-${v.end}` : ""}`).join(", ")}`);
-  if (r.repro) lines.push(`repro: ${oneLine(r.repro)}`);
+  if (r.reproStatus && r.reproStatus !== "not-attempted") lines.push(`repro: ${r.reproStatus === "verified" ? "verified execution" : "unverified (not run)"}: ${r.repro ? `\`${oneLine(r.repro)}\`` : ""}${r.reproOutcome ? ` → ${oneLine(r.reproOutcome)}` : ""}`);
+  else if (!r.reproStatus && r.repro) lines.push(`repro: ${oneLine(r.repro)}`);
   if (r.deadEnds) lines.push(`dead ends: ${oneLine(r.deadEnds)}`);
   // prose is word-wrapped, not elided like other long lines
   if (r.answer.trim()) lines.push("notes:", ...r.answer.trim().split("\n").flatMap((l) => wrap(l.trimEnd())));
@@ -230,6 +235,7 @@ export function renderResearch(r: ResearchRecord) {
   if (r.worktree) lines.push(`worktree: ${r.worktree}/`);
   const n = r.unlanded.length;
   if (n) lines.push(`note: ${n} job${n > 1 ? "s" : ""} not yet landed (${r.unlanded.join(", ")}); their changes are not visible to research`);
+  if (r.usage.costIncomplete || r.usage.costSource === "unknown") lines.push("cost note: unknown pricing prevents a complete dollar cap; time and turn caps still apply");
   lines.push(`log: .cheapag/jobs/${r.job}/`);
   return lines.map(fit).join("\n");
 }
@@ -245,7 +251,7 @@ export function renderBatch(b: BatchRecord, jobs: JobRecord[], fix?: JobRecord) 
     [
       `BATCH ${b.batch} groups=${b.groups.length}`, ...counts.map(([s, n]) => `${s}=${n}`),
       `landed=${jobs.filter((j) => j.landed).length}`, `integration=${b.integration}`,
-      `cost=$${[...jobs, ...(fix ? [fix] : [])].reduce((n, j) => n + j.usage.costUsd, 0).toFixed(3)}`,
+      renderCost(sumCosts([...jobs, ...(fix ? [fix] : [])].map(j => j.usage))),
     ].join(" "),
   ];
   if (b.notes.length) head.push(`note: ${b.notes.join("; ")}`);
