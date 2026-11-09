@@ -311,6 +311,13 @@ function spawnServer(configDir: string, password: string) {
         ...process.env,
         OPENCODE_SERVER_PASSWORD: password,
         OPENCODE_CONFIG_DIR: configDir,
+        // CONFIG_DIR supplements global config; it does not replace it. Personal plugins can
+        // rewrite allowed commands (e.g. git diff -> rtk git diff). Isolate config discovery,
+        // but keep XDG_DATA_HOME/auth and provider key envs.
+        XDG_CONFIG_HOME: join(configDir, "isolated-config"),
+        OPENCODE_TEST_HOME: join(configDir, "isolated-home"),
+        OPENCODE_CONFIG: "",
+        OPENCODE_CONFIG_CONTENT: "",
         OPENCODE_DISABLE_PROJECT_CONFIG: "1",
         // its own session database beside the user's (relative to OpenCode's data dir, where the shared auth.json stays): a newer
         // OpenCode installed by the user migrates opencode.db to a schema 1.19 refuses to start on ("has no session table")
