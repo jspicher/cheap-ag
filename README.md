@@ -21,7 +21,7 @@ Repository consent is a separate prerequisite: `/cheapag:allow` records which pr
 | Codex worker engine | Select `codex/default`, `codex/<model>`, or an alias for delegation. Codex-only use needs no OpenCode login. |
 | Per-task models | Explicit model overrides survive retries, batches, and deferred integration repairs. Changing providers preserves aliases. |
 | Task intent | `kind: fix` requires reproduction checks; `change` and its alias `feature` represent new behavior. Step intent overrides call intent, then inference applies. Mixed groups use fix checks if any step is a fix. |
-| Multiple repositories | MCP tools accept an absolute `root`. CLI commands support `--repo`. Jobs, consent, and landing remain isolated per checkout, including linked worktrees. |
+| Multiple repositories | MCP tools accept an absolute `root`. CLI commands support `--repo`. Consent is shared by a repository's linked worktrees; jobs, configuration overrides, and landing stay scoped to the checkout. |
 | Scoped edit guards | Enforcement requires a matching session, prompt, and repository after an actual delegation result. A guard setting alone never redirects unrelated work; missing prompt identity disables prompt-scoped enforcement. |
 | Endpoint-bound consent | Custom-endpoint consent includes the canonical destination. Changed endpoints and legacy consent without that identity require renewed consent. |
 | Safer landing | A disposable index rehashes affected tracked files before the three-way check, including stale timestamps and `assume-unchanged` entries. The real index, staging, and stash are preserved. Edits racing after the check remain possible. |
@@ -85,7 +85,31 @@ These are the seven bundled skills. Claude uses `/cheapag:<name>`; Codex uses th
 | `/cheapag:hook on` / `/cheapag:hook off` | Configure the scoped edit guard. Enabling it does not authorize delegation or block unrelated work. |
 | `/cheapag:clean` | Apply retention cleanup to completed job logs and leftover worktrees, preserving active jobs. |
 
-`delegate`, `research`, `ping`, `jobs`, `reply`, and `land` are **MCP tools**, not additional slash commands. Ask the host to use them for an explicitly requested Cheap Agent task. `reply` answers a blocked worker; `land` handles retained results. `ping` checks server/provider setup, not a successful live model call.
+`delegate`, `research`, `ping`, `jobs`, `reply`, and `land` are **MCP tools**, not additional slash commands. Ask the host to use them for an explicitly requested Cheap Agent task. `reply` answers a blocked worker; `land` handles retained results. `ping` checks server/provider setup and reports `consent=allowed|required|blocked` for the repository's configured OpenCode route, with the gate's explanation when blocked. `OK` alone is server health, not consent or a successful live model call. Codex approval is reported separately as `codex=allowed`.
+
+### Approval across worktrees
+
+`allow --repo <checkout>` writes `cheapag/consent.json` under Git's common directory
+(`git rev-parse --git-common-dir`). One approval covers existing and future linked
+worktrees of that repository, including separate Codex engine approval. Unrelated
+clones and repositories do not share approval. Jobs, logs, and worker files remain
+under each checkout's own `.cheapag/`; do not copy or link that entire directory
+between worktrees.
+
+For older installations, a primary checkout's `.cheapag/consent.json` is read as
+repository-wide approval until a shared record is written. If no primary or shared
+record exists, an old slot-only record is honored only in that slot. Reads never
+promote or rewrite it. The next explicit `allow` writes shared consent and preserves
+the existing independent engine approval. A shared record takes precedence over all
+legacy copies, even when empty or malformed. To revoke all consent without reviving
+legacy copies, replace the shared record with `{}`; to revoke Codex only, remove its
+`engines.codex` entry from that record.
+
+Removing or reordering already-approved route models does not require renewal.
+Adding new OpenRouter recipients, changing provider, or changing a custom endpoint
+still requires the applicable consent gate to pass. Checkout-specific model overrides
+are checked against the shared approval. Already-running MCP processes must be
+restarted to load this behavior; installation does not interrupt them.
 
 ## CLI diagnostics and repository selection
 

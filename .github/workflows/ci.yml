@@ -48,4 +48,4 @@ jobs:
             echo "no API key, skipping live tests"
             exit 0
           fi
-          npx vitest run test/live.test.ts
+          npx vitest run test/live.test.ts test/worktree-live.test.ts

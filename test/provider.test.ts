@@ -1,4 +1,5 @@
 import { CLI } from "../src/cli-command.js";
+import { consentFile as sharedConsentFile, readConsentRecord } from "../src/consent-storage.js";
 import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -8,7 +9,7 @@ import { startFakeOpencode, type Action } from "./fake-opencode.js";
 import { hermeticHome, removeDir, serverEntry, slow, tempRepo, type Logins } from "./harness.js";
 
 /** `cheapag provider <args>` in a repo, with `logins` saved and `config` as the user config; the live check runs on the fake. */
-async function run(args: string[], opts: { logins?: Logins; config?: object; consent?: object; check?: Action[] } = {}) {
+async function run(args: string[], opts: { logins?: Logins; config?: object; consent?: object; check?: Action[]; legacy?: boolean } = {}) {
   const fake = await startFakeOpencode();
   onTestFinished(fake.close);
   fake.script(...(opts.check ?? [{ usage: { cost: 0.0001 } }]));
@@ -21,9 +22,9 @@ async function run(args: string[], opts: { logins?: Logins; config?: object; con
   }
   const repo = tempRepo();
   onTestFinished(repo.cleanup);
-  const consentFile = join(repo.dir, ".cheapag", "consent.json");
+  const consentFile = opts.legacy ? join(repo.dir, ".cheapag", "consent.json") : sharedConsentFile(repo.dir);
   if (opts.consent) {
-    mkdirSync(join(repo.dir, ".cheapag"), { recursive: true });
+    mkdirSync(join(consentFile, ".."), { recursive: true });
     writeFileSync(consentFile, JSON.stringify(opts.consent));
   }
   const r = await promisify(execFile)(process.execPath, [serverEntry, "provider", ...args], { cwd: repo.dir, env: { ...env, CHEAPAG_OPENCODE_URL: fake.url }, encoding: "utf8" }).catch((e) => e);
@@ -32,7 +33,8 @@ async function run(args: string[], opts: { logins?: Logins; config?: object; con
     stderr: r.stderr as string,
     out: r.stdout as string,
     config: existsSync(configFile) ? JSON.parse(readFileSync(configFile, "utf8")) : undefined,
-    consent: existsSync(consentFile) ? JSON.parse(readFileSync(consentFile, "utf8")) : undefined,
+    consent: readConsentRecord(repo.dir),
+    sharedExists: existsSync(sharedConsentFile(repo.dir)),
     fake,
   };
 }
@@ -71,6 +73,14 @@ test("a failed live check puts the previous provider and consent back", async ()
   expect(r.consent).toEqual(consent);
 }, slow(60_000));
 
+test("a failed provider switch from legacy consent removes the new shared record and preserves legacy approval", async () => {
+  const consent = { mode: "all", provider: "opencode-go", approvedAt: "legacy", engines: { codex: { approvedAt: "legacy" } } };
+  const r = await run(["openrouter"], { legacy: true, consent, check: [{ error: { name: "APIError", message: "402 Insufficient credits" } }] });
+  expect(r.code).toBe(1);
+  expect(r.consent).toEqual(consent);
+  expect(r.sharedExists).toBe(false);
+}, slow(60_000));
+
 test("a provider with no saved key points to login; an explicit model consent is not carried; same provider and bad names are said", async () => {
   const missing = await run(["deepseek"]);
   expect(missing.code).toBe(1);
@@ -80,7 +90,7 @@ test("a provider with no saved key points to login; an explicit model consent is
   const models = await run(["OpenRouter"], { consent: { mode: "models", models: ["opencode-go/kimi-k3"], provider: "opencode-go", approvedAt: "2026-11-01T00:00:00Z" } });
   expect(models.code, models.stderr).toBe(0);
   expect(models.out).toContain("! This repo's consent names OpenCode Go models (models opencode-go/kimi-k3); run /cheapag:allow here for OpenRouter");
-  expect(models.consent.provider).toBe("opencode-go");
+  expect(models.consent?.provider).toBe("opencode-go");
 
   expect((await run(["opencode-go"])).out).toContain("✓ already using OpenCode Go");
   const bad = await run(["gemini"]);

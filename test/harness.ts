@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { removeDirectory } from "../src/platform.js";
 
 export const serverEntry = join(import.meta.dirname, "..", "dist", "index.js");
 
@@ -13,7 +14,10 @@ export const slow = (ms: number) => (process.platform === "win32" ? ms * 3 : ms)
 /** Removes a temp dir, retrying on Windows; on EBUSY there, warns and leaves it behind. */
 export function removeDir(dir: string) {
   try {
-    rmSync(dir, { recursive: true, force: true, maxRetries: 30, retryDelay: 200 });
+    // Node's recursive rm can skip its advertised retries for Windows EPERM.
+    // Use the same explicit bounded retry as production cleanup.
+    if (process.platform === "win32") removeDirectory(dir);
+    else rmSync(dir, { recursive: true, force: true, maxRetries: 30, retryDelay: 200 });
   } catch (err) {
     if (process.platform === "win32" && (err as NodeJS.ErrnoException).code === "EBUSY") {
       console.warn(`cheapag-test: left ${dir} behind (Windows: still in use by OpenCode)`);

@@ -129,14 +129,15 @@ test("reply to an unknown job, or to a malformed id, is a clear FAIL", async () 
   expect(await reply("../../etc", "a")).toBe("FAIL reason: no job ../../etc; reply only to a BLOCKED job's id");
 });
 
-test("a reply that cannot reach the paused session (OpenCode gone) is a FAIL that keeps the worktree, not a hang", async () => {
+test("a reply that cannot reach the paused session (OpenCode gone) is PROVIDER and keeps the worktree", async () => {
   const { repo, fake, record, delegate, reply } = await scenario([ASK, ...edit(2, "done")]);
   const job = jobOf(await delegate());
   await fake.close();
   const text = await reply(job, "a");
-  expect(text.split("\n")[0]).toMatch(new RegExp(`^FAIL ${job} `));
-  expect(text).toContain("\nreason: worker error: could not answer the worker's question");
-  expect(record(job)).toMatchObject({ status: "FAIL", question: { answer: OPTIONS[0] }, worktree: `.cheapag/worktrees/${job}` });
+  expect(text.split("\n")[0]).toMatch(new RegExp(`^PROVIDER ${job} `));
+  expect(text).toContain("could not answer the worker's question");
+  expect(text).toContain("ECONNREFUSED");
+  expect(record(job)).toMatchObject({ status: "PROVIDER", question: { answer: OPTIONS[0] }, worktree: `.cheapag/worktrees/${job}` });
   expect(existsSync(join(repo.dir, ".cheapag", "worktrees", job))).toBe(true);
 });
 

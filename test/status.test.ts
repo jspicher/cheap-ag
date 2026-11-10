@@ -9,7 +9,7 @@ import { allowRepo, hermeticHome, serverEntry, tempRepo } from "./harness.js";
 
 const { version } = createRequire(import.meta.url)("../package.json") as { version: string };
 const HOUR = 3_600_000;
-const deadPid = spawnSync("true").pid!;
+const deadPid = spawnSync(process.execPath, ["-e", ""]).pid!;
 
 function setup(logins = {}) {
   const repo = tempRepo();
@@ -75,11 +75,13 @@ test("cheapag status names the preset: the user's, a repo's cheapag.json over it
   expect(status().split("\n")[0]).toBe(`cheapag ${version} provider=opencode-go preset=strongest`);
 });
 
-test("cheapag status says consent no longer covers the models after a preset change, as the next job would", () => {
+test("cheapag status keeps approved preset models valid but rejects a new recipient", () => {
   const { repo, env, status } = setup({ openrouter: "k" });
   allowRepo(repo.dir, env);
   expect(status().split("\n")[1]).toMatch(/^consent: all models \(since /);
   writeFileSync(join(repo.dir, "cheapag.json"), JSON.stringify({ models: PRESETS.openrouter.strongest }));
+  expect(status().split("\n")[1]).toMatch(/^consent: all models \(since /);
+  writeFileSync(join(repo.dir, "cheapag.json"), JSON.stringify({ models: { implement: "openrouter/new/recipient" } }));
   expect(status().split("\n")[1]).toBe("consent: given for other worker models (preset or models changed); run /cheapag:allow");
 });
 

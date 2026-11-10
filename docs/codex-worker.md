@@ -32,7 +32,8 @@ Code goes to OpenAI, a different recipient from the OpenCode provider, so it nee
   reads as "no OpenCode consent" (the base record's validation is unchanged).
 - A codex model without the entry gets a CONSENT block: code from this repo → OpenAI via the Codex CLI (your ChatGPT
   plan or API key); retention: per your OpenAI account's data controls; approve: `node dist/index.js allow --codex`.
-- Revoking: delete the `engines` key (or `.cheapag/consent.json`). No `--no-codex` flag in v1.
+- Consent is stored at `<git-common-dir>/cheapag/consent.json` and shared by linked worktrees. Legacy primary-checkout consent remains readable; legacy slot-only consent does not authorize siblings. See README's approval migration rules.
+- Revoking: remove `engines.codex` from the shared record, or replace that record with `{}` to revoke all engines. Do not delete the shared file while legacy copies remain, as that enables legacy fallback. No `--no-codex` flag in v1.
 
 ## Without an OpenCode login
 

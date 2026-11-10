@@ -1,4 +1,5 @@
 import { CLI } from "../src/cli-command.js";
+import { consentFile as sharedConsentFile } from "../src/consent-storage.js";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
@@ -67,7 +68,7 @@ test("first delegate in an unapproved repo returns CONSENT and creates no job; a
   // the developer approves from a terminal while the server keeps running
   const { env } = hermeticHome(logins);
   expect(allowRepo(repo.dir, env)).toContain("code may go to OpenCode Go (all models)");
-  expect(JSON.parse(readFileSync(join(repo.dir, ".cheapag", "consent.json"), "utf8"))).toMatchObject({ mode: "all", provider: "opencode-go" });
+  expect(JSON.parse(readFileSync(sharedConsentFile(repo.dir), "utf8"))).toMatchObject({ mode: "all", provider: "opencode-go" });
   fake.script({ edit: "hello.txt", content: "hi\n" }, { tool: "write" }, FINISH);
   expect(await delegate(server.client)).toMatch(/^OK j\w{4} step=1 /);
 });
@@ -124,14 +125,14 @@ test("on one provider a model change after consent never asks again: the job run
   expect(readFileSync(join(repo.dir, "hello.txt"), "utf8")).toBe("hi\n");
 });
 
-test("on OpenRouter a model change after consent asks again until acceptRoute records it", async () => {
+test("on OpenRouter a new model after consent asks again until acceptRoute records it", async () => {
   const { repo, fake, server, delegate } = await scenario({ logins: { openrouter: "k" }, allow: [] });
   allowRepo(repo.dir, homeEnv(server.home), ["--codex"]);
-  const consentFile = join(repo.dir, ".cheapag", "consent.json");
+  const consentFile = sharedConsentFile(repo.dir);
   const engines = JSON.parse(readFileSync(consentFile, "utf8")).engines;
   const config = join(server.home, "config", "cheapag", "config.json");
   mkdirSync(dirname(config), { recursive: true });
-  writeFileSync(config, JSON.stringify({ models: { implement: "openrouter/z-ai/glm-5.3" } }));
+  writeFileSync(config, JSON.stringify({ models: { implement: "openrouter/new/recipient" } }));
   expect(await delegate()).toMatch(/^CONSENT /);
   expectUntouched(repo, fake);
   vi.stubEnv("XDG_CONFIG_HOME", join(server.home, "config"));
@@ -140,7 +141,7 @@ test("on OpenRouter a model change after consent asks again until acceptRoute re
   expect(JSON.parse(readFileSync(consentFile, "utf8")).engines).toEqual(engines);
   fake.script({ edit: "hello.txt", content: "hi\n" }, FINISH);
   expect(await delegate()).toMatch(/^OK /);
-  expect(fake.recorded.sessions[0].model).toEqual({ providerID: "openrouter", id: "z-ai/glm-5.3" });
+  expect(fake.recorded.sessions[0].model).toEqual({ providerID: "openrouter", id: "new/recipient" });
 });
 
 test("OpenRouter zero-retention only adds its zdr routing preference to every model, on top of deny data collection", async () => {
@@ -187,7 +188,7 @@ test("cheapag allow rejects unknown arguments and needs a login and a git repo",
   expect(fails(repo.dir, hermeticHome().env, [])).toContain(`no worker provider; run ${CLI} login first`);
   mkdirSync(join(home, "not-a-repo"));
   expect(fails(join(home, "not-a-repo"), env, [])).toContain("is not inside a git repository");
-  expect(existsSync(join(repo.dir, ".cheapag", "consent.json"))).toBe(false);
+  expect(existsSync(sharedConsentFile(repo.dir))).toBe(false);
 });
 
 test("cheapag allow adds .cheapag/ to .git/info/exclude once, not again on a second run", () => {

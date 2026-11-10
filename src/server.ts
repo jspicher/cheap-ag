@@ -6,7 +6,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import type { ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { cleanProject, gitignoreHint, startPeriodicCleanup } from "./cleanup.js";
 import { loadConfig, type HardTasks, type TakeOver } from "./config.js";
-import { presetHere, readEngines } from "./consent.js";
+import { consentGate, presetHere, readEngines } from "./consent.js";
 import { detectProvider, LOGIN_COMMAND, NO_PROVIDER, redact, type Provider } from "./credentials.js";
 import { delegate, jobs, landJobs, recoverJobs, reply } from "./jobs.js";
 import { debugLogPath, ensureOpencode, stopOpencode } from "./opencode.js";
@@ -153,7 +153,7 @@ export async function serve(host: "claude" | "codex" = "claude") {
   server.registerTool(
     "ping",
     {
-      description: "Check that the Cheap Agent server is running and report its version.",
+      description: "Check server health and report consent=allowed|required|blocked for the repository's configured OpenCode route. Server OK alone is not approval; Codex consent is separate.",
       inputSchema: { root: ROOT },
     },
     async ({ root }) => {
@@ -162,6 +162,13 @@ export async function serve(host: "claude" | "codex" = "claude") {
         // ping works outside a repository; a given root must be one, and is reported resolved
         const dir = root === undefined ? undefined : callRoot(root);
         const at = dir === undefined ? "" : ` root=${dir}`;
+        let repo = dir;
+        if (repo === undefined) {
+          try { repo = projectRoot(process.cwd()); } catch {} // health checks also work outside Git
+        }
+        const gate = repo && provider ? consentGate(repo, provider.provider) : undefined;
+        const consent = gate ? ` consent=${"block" in gate ? (gate.block.startsWith("CONSENT ") ? "required" : "blocked") : "allowed"}` : "";
+        const reason = gate && "block" in gate ? `\n${gate.block}` : "";
         // only when this repo opted in: Codex is a second engine, picked per call (docs/codex-worker.md)
         const codex = codexHere(dir) ? " codex=allowed" : "";
         // no OpenCode login: Codex jobs still run where the repo allows them, so the server is up, without OpenCode
@@ -169,7 +176,7 @@ export async function serve(host: "claude" | "codex" = "claude") {
         const opencode = await ensureOpencode(provider, dir);
         // read after the boot: the debug log is opened when OpenCode starts
         const debug = debugLogPath ? ` debug_log=${debugLogPath}` : "";
-        return safeText(`OK cheapag ${version} opencode=${opencode.version} provider=${provider.provider} via=${provider.via} preset=${presetHere(provider.provider, dir)}${codex}${at}${debug}`);
+        return safeText(`OK cheapag ${version} opencode=${opencode.version} provider=${provider.provider} via=${provider.via} preset=${presetHere(provider.provider, dir)}${codex}${consent}${at}${debug}${reason}`);
       } catch (err) {
         return safeText(`FAIL reason: ${(err as Error).message}`);
       }

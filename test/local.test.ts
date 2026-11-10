@@ -1,4 +1,5 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { consentFile } from "../src/consent-storage.js";
 import { createServer } from "node:http";
 import { join } from "node:path";
 import { afterEach, expect, onTestFinished, test, vi } from "vitest";
@@ -28,7 +29,7 @@ test("endpoint identity binds model-specific and legacy consent, preserving Code
   writeFileSync(file, JSON.stringify({ local: { ...LOCAL, base_url: LOCAL.base_url + "/other" } }));
   expect(consentGate(repo.dir, "local")).toHaveProperty("block");
   expect(readEngines(repo.dir).codex).toBeTruthy();
-  const consent = join(repo.dir, ".cheapag/consent.json");
+  const consent = consentFile(repo.dir);
   const legacy = JSON.parse(readFileSync(consent, "utf8")); delete legacy.endpointFingerprint;
   writeFileSync(consent, JSON.stringify(legacy));
   writeFileSync(file, JSON.stringify({ local: LOCAL }));
@@ -131,7 +132,7 @@ test("consent names the server, and asks again when the same model id moves to a
   const gate = consentGate(repo.dir, "local");
   expect("block" in gate && gate.block).toContain("custom endpoint at http://127.0.0.1:8084/v1: qwen3.8-flash-next-gyro-gyro-s");
   writeConsent(repo.dir, { mode: "all", provider: "local", approvedAt: new Date().toISOString() });
-  const consent = JSON.parse(readFileSync(join(repo.dir, ".cheapag", "consent.json"), "utf8"));
+  const consent = JSON.parse(readFileSync(consentFile(repo.dir), "utf8"));
   expect(routeMoved(repo.dir, consent)).toBe(false);
   expect("route" in consentGate(repo.dir, "local")).toBe(true);
 

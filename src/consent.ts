@@ -1,7 +1,8 @@
 import { CLI } from "./cli-command.js";
 import { endpointFingerprint } from "./endpoint.js";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { basename, dirname } from "node:path";
+import { consentFile as file, readConsentRecord as readRecord } from "./consent-storage.js";
 import { codexEscalation } from "./codex.js";
 import { providerLabel, type Provider } from "./credentials.js";
 import { failBlock, renderConsent } from "./report.js";
@@ -11,21 +12,21 @@ import { projectRoot } from "./workspace.js";
 
 /**
  * Consent: nothing leaves the repo until the developer opts in with `cheapag allow` (spec: Consent, A21).
- * The record is `<repo>/.cheapag/consent.json`; only the CLI writes it, no MCP tool can.
+ * The record is `<git-common-dir>/cheapag/consent.json`, shared by worktrees; only the CLI writes it.
  */
 
 export type ConsentMode = "all" | "zdr-only" | "models";
-/** `route`: the models the CONSENT block listed when all or zero-retention was given; a preset or `models` change that alters it asks again. */
+/** `route`: approved recipients; all/zero-retention consent asks again only when the configured route adds one. */
 export type Consent = { mode: ConsentMode; provider: Provider["provider"]; models?: string[]; route?: string[]; endpointFingerprint?: string; approvedAt: string };
-
-const file = (root: string) => join(root, ".cheapag", "consent.json");
 
 /** The repo's consent, or undefined when there is none (a damaged record counts as none; `cheapag allow` rewrites it). */
 export function readConsent(root: string): Consent | undefined {
   try {
-    if (!existsSync(file(root))) return undefined;
-    const c = JSON.parse(readFileSync(file(root), "utf8")) as Consent;
+    const c = readRecord(root) as Consent | undefined;
+    if (!c) return undefined;
     const valid = ["all", "zdr-only", "models"].includes(c.mode) && typeof c.provider === "string" &&
+      typeof c.approvedAt === "string" &&
+      (c.route === undefined || (Array.isArray(c.route) && c.route.every((m) => typeof m === "string"))) &&
       (c.mode !== "models" || (Array.isArray(c.models) && c.models.every((m) => typeof m === "string")));
     return valid ? c : undefined;
   } catch {
@@ -34,7 +35,7 @@ export function readConsent(root: string): Consent | undefined {
 }
 
 export function writeConsent(root: string, consent: Consent) {
-  mkdirSync(join(root, ".cheapag"), { recursive: true });
+  mkdirSync(dirname(file(root)), { recursive: true });
   // an explicit model list bounds the recipients by itself; the other modes are tied to the route they were shown
   const route = consent.mode === "models" ? undefined : routeNames(fullRoute(consent.provider, configuredModels(root, consent.provider)));
   // another engine's opt-in is its own: a new provider consent keeps it
@@ -48,16 +49,6 @@ export function writeConsent(root: string, consent: Consent) {
  */
 export type Engines = { codex?: { approvedAt: string } };
 
-/** The consent file as stored, or undefined when missing or unreadable. */
-function readRecord(root: string): Record<string, unknown> | undefined {
-  try {
-    const raw = JSON.parse(readFileSync(file(root), "utf8")) as unknown;
-    return raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 export function readEngines(root: string): Engines {
   const codex = (readRecord(root)?.engines as Engines | undefined)?.codex;
   return codex && typeof codex.approvedAt === "string" ? { codex: { approvedAt: codex.approvedAt } } : {};
@@ -65,7 +56,7 @@ export function readEngines(root: string): Engines {
 
 /** `cheapag allow --codex`: adds the Codex opt-in to the repo's record, keeping whatever else it holds. */
 export function allowCodex(root: string) {
-  mkdirSync(join(root, ".cheapag"), { recursive: true });
+  mkdirSync(dirname(file(root)), { recursive: true });
   const record = readRecord(root) ?? {};
   const engines = { ...(record.engines as Engines | undefined), codex: { approvedAt: new Date().toISOString() } };
   writeFileSync(file(root), JSON.stringify({ ...record, engines }, null, 2) + "\n");
@@ -112,13 +103,14 @@ const routeNames = (r: Route) => {
 /**
  * The models config now routes to other models than the consent was shown (not judged on a damaged config, which the job's own load reports; a record from before routes were kept has none).
  * Within one provider the code goes to the same company, so a model change never asks again; OpenRouter (the model picks the upstream)
- * and a local server (a URL is a recipient) keep the route check.
+ * and a local server (a URL is a recipient) require approval for new recipients. Removing or reordering
+ * already-approved models does not expand consent and must not ask again.
  */
 export function routeMoved(root: string, consent: Consent) {
   if (endpointMoved(consent)) return true;
   if (consent.provider !== "openrouter" && consent.provider !== "local") return false;
   const models = configuredModels(root, consent.provider);
-  return !!models && !!consent.route && String(consent.route) !== String(routeNames(fullRoute(consent.provider, models)));
+  return !!consent.route && routeNames(fullRoute(consent.provider, models)).some((name) => !consent.route!.includes(name));
 }
 
 export function endpointMoved(consent: Consent): boolean {

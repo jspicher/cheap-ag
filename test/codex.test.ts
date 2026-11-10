@@ -1,4 +1,5 @@
 import { CLI } from "../src/cli-command.js";
+import { consentFile } from "../src/consent-storage.js";
 import { mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -92,7 +93,7 @@ test("a codex/ model needs its own consent: CONSENT without allow --codex, even 
   allowRepo(s.repo.dir, s.cliEnv, ["--codex"]);
   // a later plain allow keeps the Codex opt-in
   allowRepo(s.repo.dir, s.cliEnv, []);
-  const consent = JSON.parse(readFileSync(join(s.repo.dir, ".cheapag", "consent.json"), "utf8"));
+  const consent = JSON.parse(readFileSync(consentFile(s.repo.dir), "utf8"));
   expect(consent.mode).toBe("all");
   expect(consent.engines.codex.approvedAt).toMatch(/^\d{4}-/);
   expect(await s.delegate({ task: "Add a.txt" })).toMatch(/^OK /);

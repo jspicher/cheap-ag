@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename } from "node:path";
+import { consentFile as sharedConsentFile } from "./consent-storage.js";
 import { userConfigFile } from "./config.js";
 import { consentGate, describe, readConsent, writeConsent } from "./consent.js";
 import { detectProvider, LOGIN_COMMAND, PROVIDERS, providerLabel, redact, usableProviders, type Provider } from "./credentials.js";
@@ -54,12 +55,15 @@ export async function provider(args: string[]): Promise<number> {
   try {
     root = projectRoot(process.cwd());
   } catch {} // outside a repo there is no consent to move
-  const consentFile = root && join(root, ".cheapag", "consent.json");
+  const consentFile = root && sharedConsentFile(root);
   const consentBefore = consentFile && existsSync(consentFile) ? readFileSync(consentFile, "utf8") : undefined;
   const rollBack = () => {
     if (userBefore === undefined) rmSync(userFile, { force: true });
     else writeFileSync(userFile, userBefore);
-    if (consentFile && consentBefore !== undefined) writeFileSync(consentFile, consentBefore);
+    if (consentFile) {
+      if (consentBefore === undefined) rmSync(consentFile, { force: true });
+      else writeFileSync(consentFile, consentBefore);
+    }
   };
 
   if (!setUserKey("provider", target, out)) return 1;
