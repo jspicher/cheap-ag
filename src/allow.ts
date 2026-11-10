@@ -6,7 +6,7 @@ import { detectProvider, LOGIN_COMMAND, providerLabel, redact } from "./credenti
 import { modelName, routeModels } from "./routing.js";
 import { git, projectRoot } from "./workspace.js";
 
-const USAGE = "usage: cheapag allow [--zdr-only | --models <provider/model,…> | --codex]";
+const USAGE = "usage: cheapag allow [--zdr-only | --models <provider/model,…> | --codex] [--provider-wide]";
 
 /**
  * `cheapag allow`: the developer's opt-in for the current repo (spec: Consent). Non-interactive, so the plugin's
@@ -17,6 +17,9 @@ export function allow(args: string[]): number {
   const out = (line: string) => process.stdout.write(redact(line) + "\n");
   // Codex is its own recipient (OpenAI): its opt-in is separate, and needs no OpenCode login (docs/codex-worker.md)
   if (args.length === 1 && args[0] === "--codex") return allowCodexHere(out);
+  const wideIndex = args.indexOf("--provider-wide");
+  const providerWide = wideIndex !== -1;
+  if (providerWide) args = [...args.slice(0, wideIndex), ...args.slice(wideIndex + 1)];
   let consent: Omit<Consent, "provider" | "approvedAt">;
   if (!args.length) consent = { mode: "all" };
   else if (args.length === 1 && args[0] === "--zdr-only") consent = { mode: "zdr-only" };
@@ -31,6 +34,11 @@ export function allow(args: string[]): number {
     out(`✗ no worker provider; run ${LOGIN_COMMAND} first`);
     return 1;
   }
+  if (providerWide && (provider.provider !== "openrouter" || consent.mode === "models")) {
+    out("✗ --provider-wide requires OpenRouter and cannot be combined with --models; --zdr-only is supported");
+    return 1;
+  }
+  if (providerWide) consent.scope = "provider";
   let root: string;
   try {
     root = projectRoot(process.cwd());

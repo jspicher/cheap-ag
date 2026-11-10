@@ -3,7 +3,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, onTestFinished, test, vi } from "vitest";
 import { consentFile } from "../src/consent-storage.js";
-import { consentGate, readConsent, readEngines, routeMoved, writeConsent } from "../src/consent.js";
+import { writePlugin } from "../src/install.js";
+import { codexGate, consentGate, readConsent, readEngines, routeMoved, writeConsent } from "../src/consent.js";
 import { allowRepo, callText, hermeticHome, homeEnv, removeDir, startServer, tempRepo } from "./harness.js";
 import { startFakeOpencode } from "./fake-opencode.js";
 
@@ -18,6 +19,35 @@ function fixture() {
   repo.git("worktree", "add", "--detach", slot, "HEAD");
   return { repo, home, slot };
 }
+
+test("provider-wide consent is shared, stays provider-bound, and can be narrowed without losing Codex approval", () => {
+  const { repo, home, slot } = fixture();
+  expect(allowRepo(slot, home.env, ["--provider-wide"])).toContain("current and future OpenRouter models");
+  expect(readConsent(repo.dir)?.scope).toBe("provider");
+  const approved = readFileSync(consentFile(repo.dir), "utf8");
+  writePlugin(join(home.home, "runtime", "index.js"), process.execPath);
+  expect(readFileSync(consentFile(repo.dir), "utf8")).toBe(approved);
+  writeFileSync(join(slot, "cheapag.json"), JSON.stringify({ models: { implement: "openrouter/future/model" } }));
+  expect(consentGate(slot, "openrouter")).toHaveProperty("route");
+  expect(consentGate(slot, "deepseek")).toHaveProperty("block");
+  expect(codexGate(slot, { providerID: "codex", id: "default" })).toHaveProperty("block");
+  allowRepo(slot, home.env, ["--codex"]);
+  expect(readConsent(repo.dir)?.scope).toBe("provider");
+  allowRepo(repo.dir, home.env);
+  expect(readConsent(repo.dir)?.scope).toBeUndefined();
+  expect(consentGate(slot, "openrouter")).toHaveProperty("block");
+  expect(readEngines(slot).codex).toBeTruthy();
+});
+
+test("invalid provider-wide records fail closed", () => {
+  const { repo, home } = fixture();
+  allowRepo(repo.dir, home.env);
+  const base = readConsent(repo.dir)!;
+  for (const invalid of [{ scope: "unknown" }, { scope: "provider", provider: "local" }, { scope: "provider", mode: "models", models: [] }]) {
+    writeFileSync(consentFile(repo.dir), JSON.stringify({ ...base, ...invalid }));
+    expect(readConsent(repo.dir)).toBeUndefined();
+  }
+});
 
 test("approval from either checkout is shared with existing and future worktrees, including Codex", () => {
   const { repo, home, slot } = fixture();

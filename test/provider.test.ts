@@ -62,6 +62,15 @@ test("switching moves the repo's consent with its mode, shows what it covers, li
   expect((await run([], { config: r.config })).out).toContain("  openrouter  OpenRouter  (in use)");
 }, slow(60_000));
 
+test("switching providers does not transfer provider-wide OpenRouter approval", async () => {
+  const consent = { mode: "all", scope: "provider", provider: "openrouter", approvedAt: "now" };
+  const r = await run(["opencode-go"], { config: { provider: "openrouter" }, consent });
+  expect(r.code, r.stderr).toBe(0);
+  expect(r.consent).toEqual(consent);
+  expect(r.out).toContain("run /cheapag:allow here for OpenCode Go");
+  expect(r.out).not.toContain("consent moved");
+}, slow(30_000));
+
 test("a failed live check puts the previous provider and consent back", async () => {
   const consent = { mode: "zdr-only", provider: "opencode-go", approvedAt: "2026-11-01T00:00:00Z", engines: { codex: { approvedAt: "2026-10-31T00:00:00Z" } } };
   const config = { preset: "balanced", aliases: { cx: "codex/default" } };

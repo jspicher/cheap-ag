@@ -16,8 +16,8 @@ import { projectRoot } from "./workspace.js";
  */
 
 export type ConsentMode = "all" | "zdr-only" | "models";
-/** `route`: approved recipients; all/zero-retention consent asks again only when the configured route adds one. */
-export type Consent = { mode: ConsentMode; provider: Provider["provider"]; models?: string[]; route?: string[]; endpointFingerprint?: string; approvedAt: string };
+/** `route`: approved recipients; only explicit OpenRouter `scope: provider` covers future recipients. */
+export type Consent = { mode: ConsentMode; provider: Provider["provider"]; scope?: "provider"; models?: string[]; route?: string[]; endpointFingerprint?: string; approvedAt: string };
 
 /** The repo's consent, or undefined when there is none (a damaged record counts as none; `cheapag allow` rewrites it). */
 export function readConsent(root: string): Consent | undefined {
@@ -26,6 +26,7 @@ export function readConsent(root: string): Consent | undefined {
     if (!c) return undefined;
     const valid = ["all", "zdr-only", "models"].includes(c.mode) && typeof c.provider === "string" &&
       typeof c.approvedAt === "string" &&
+      (c.scope === undefined || (c.scope === "provider" && c.provider === "openrouter" && c.mode !== "models")) &&
       (c.route === undefined || (Array.isArray(c.route) && c.route.every((m) => typeof m === "string"))) &&
       (c.mode !== "models" || (Array.isArray(c.models) && c.models.every((m) => typeof m === "string")));
     return valid ? c : undefined;
@@ -36,7 +37,7 @@ export function readConsent(root: string): Consent | undefined {
 
 export function writeConsent(root: string, consent: Consent) {
   mkdirSync(dirname(file(root)), { recursive: true });
-  // an explicit model list bounds the recipients by itself; the other modes are tied to the route they were shown
+  // Keep a route snapshot even for provider-wide approval: older runtimes must remain conservative on downgrade.
   const route = consent.mode === "models" ? undefined : routeNames(fullRoute(consent.provider, configuredModels(root, consent.provider)));
   // another engine's opt-in is its own: a new provider consent keeps it
   const engines = readRecord(root)?.engines;
@@ -108,6 +109,8 @@ const routeNames = (r: Route) => {
  */
 export function routeMoved(root: string, consent: Consent) {
   if (endpointMoved(consent)) return true;
+  // Only an explicit OpenRouter-wide approval covers future upstream model recipients.
+  if (consent.provider === "openrouter" && consent.scope === "provider" && consent.mode !== "models") return false;
   if (consent.provider !== "openrouter" && consent.provider !== "local") return false;
   const models = configuredModels(root, consent.provider);
   return !!consent.route && routeNames(fullRoute(consent.provider, models)).some((name) => !consent.route!.includes(name));
@@ -239,7 +242,7 @@ function configuredModels(root: string, provider: Provider["provider"]) {
   }
 }
 
-export const describe = (c: Consent) => (c.mode === "all" ? "all models" : c.mode === "zdr-only" ? "zero-retention only" : `models ${c.models!.join(", ")}`);
+export const describe = (c: Consent) => (c.scope === "provider" ? `provider-wide: current and future OpenRouter models${c.mode === "zdr-only" ? "; zero-retention only" : ""}` : c.mode === "all" ? "all models" : c.mode === "zdr-only" ? "zero-retention only" : `models ${c.models!.join(", ")}`);
 
 /** Spec D5's CONSENT block: who would receive the code, their known retention, and how the user approves. */
 function consentBlock(root: string, provider: Provider["provider"], full: Route) {

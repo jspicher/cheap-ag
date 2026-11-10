@@ -172,6 +172,20 @@ test("an explicit list with only the escalation model runs the job on it, title 
   expect(opencodeConfig(repo.dir).small_model).toBe("opencode-go/deepseek-v4-pro");
 });
 
+test("explicit provider-wide approval runs a new OpenRouter model without renewal and retains ZDR routing", async () => {
+  const { repo, fake, server, delegate } = await scenario({ logins: { openrouter: "k" }, allow: ["--provider-wide", "--zdr-only"] });
+  const file = sharedConsentFile(repo.dir);
+  const before = readFileSync(file, "utf8");
+  expect(JSON.parse(before)).toMatchObject({ provider: "openrouter", scope: "provider", mode: "zdr-only" });
+  writeFileSync(join(repo.dir, "cheapag.json"), JSON.stringify({ models: { implement: "openrouter/new/recipient" } }));
+  expect(await callText(server.client, "ping", { root: repo.dir })).toContain("consent=allowed");
+  fake.script({ edit: "hello.txt", content: "hi\n" }, FINISH);
+  expect(await delegate()).toMatch(/^OK /);
+  expect(fake.recorded.sessions[0].model).toEqual({ providerID: "openrouter", id: "new/recipient" });
+  expect(opencodeConfig(repo.dir).provider.openrouter.models["new/recipient"].options.provider.zdr).toBe(true);
+  expect(readFileSync(file, "utf8")).toBe(before);
+});
+
 test("cheapag allow rejects unknown arguments and needs a login and a git repo", () => {
   const repo = tempRepo();
   onTestFinished(repo.cleanup);
@@ -185,6 +199,11 @@ test("cheapag allow rejects unknown arguments and needs a login and a git repo",
     throw new Error("allow succeeded");
   };
   expect(fails(repo.dir, env, ["--everything"])).toContain("usage: cheapag allow [--zdr-only | --models <provider/model,…> | --codex]");
+  expect(fails(repo.dir, env, ["--provider-wide"])).toContain("requires OpenRouter");
+  const router = hermeticHome({ openrouter: "k" }).env;
+  for (const args of [["--provider-wide", "--models", "openrouter/a"], ["--provider-wide", "--codex"], ["--provider-wide", "--provider-wide"]]) {
+    expect(fails(repo.dir, router, args)).toMatch(/usage:|cannot be combined/);
+  }
   expect(fails(repo.dir, hermeticHome().env, [])).toContain(`no worker provider; run ${CLI} login first`);
   mkdirSync(join(home, "not-a-repo"));
   expect(fails(join(home, "not-a-repo"), env, [])).toContain("is not inside a git repository");

@@ -14,6 +14,8 @@ Installation, connection, a saved API key, and repository consent do **not** aut
 
 Repository consent is a separate prerequisite: `/cheapag:allow` records which provider or models may receive this repository's code. It does not authorize future tasks. Codex workers require independent consent with `/cheapag:allow --codex`.
 
+For OpenRouter, explicitly run `allow --provider-wide` once per Git repository on each machine to approve current and future OpenRouter models, including their upstream recipients. This consent survives plugin updates and model-route changes, and is shared with linked worktrees. Add `--zdr-only` to require zero-data-retention routing. It cannot be combined with `--models` or `--codex`; another provider and Codex workers still need their own approval. Existing approvals are never widened automatically. Ordinary `allow` keeps its existing route scope and can ask again when new OpenRouter models are added. Neither mode is invalidated merely by a plugin version change.
+
 ## What this fork adds
 
 | Feature | Behavior |
