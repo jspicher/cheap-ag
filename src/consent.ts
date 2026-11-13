@@ -7,7 +7,7 @@ import { codexEscalation } from "./codex.js";
 import { providerLabel, type Provider } from "./credentials.js";
 import { failBlock, renderConsent } from "./report.js";
 import { loadConfig, localServer } from "./config.js";
-import { effectiveModels, fullRoute, model, modelName, presetOf, routeModels, type Route, type WorkerModel } from "./routing.js";
+import { effectiveModels, foreignModels, fullRoute, model, modelName, presetOf, routeModels, tierModel, type Route, type WorkerModel } from "./routing.js";
 import { projectRoot } from "./workspace.js";
 
 /**
@@ -127,6 +127,31 @@ export function presetHere(provider: Provider["provider"], cwd = process.cwd()) 
     root = projectRoot(root);
   } catch {} // outside a repo only the user's config applies
   return presetOf(provider, configuredModels(root, provider));
+}
+
+/**
+ * Adapted from harishconti's Ollama provider branch: expose silently ignored model settings without changing routing.
+ * These are configured routes, before consent filtering or per-call overrides; do not claim a job ran on them.
+ */
+export function modelWarnings(provider: Provider["provider"], cwd = process.cwd()): string[] {
+  try {
+    let root = cwd;
+    try { root = projectRoot(root); } catch {} // outside Git only the user config applies
+    const models = configuredModels(root, provider);
+    if (!models) return [];
+    const ignored = foreignModels(provider, models);
+    if (!ignored.length) return [];
+    const route = fullRoute(provider, models);
+    return ignored.map(({ role, name }) => {
+      const replacement = role === "fallback" ? route.fallbacks
+        : [role === "medium" || role === "hard" ? tierModel(route, role)
+          : role === "research" ? route.research ?? route.implement : route[role]];
+      const names = replacement.filter((m): m is WorkerModel => !!m).map(modelName).join(", ") || "none";
+      return `models.${role} names ${name}, which is ignored on ${providerLabel(provider)}; configured ${role} route: ${names}. Update cheapag.json or run ${CLI} model.`;
+    });
+  } catch {
+    return []; // malformed configuration is reported by the operation's own config load
+  }
 }
 
 // OpenRouter's provider-routing preference that restricts it to Zero Data Retention endpoints (openrouter.ai/docs, provider routing)

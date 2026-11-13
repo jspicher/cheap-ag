@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { catalog, saveModels, type CatalogModel, type Pick } from "./catalog.js";
 import { loadConfig, userConfigFile } from "./config.js";
-import { acceptRoute } from "./consent.js";
+import { acceptRoute, modelWarnings } from "./consent.js";
 import { detectProvider, LOGIN_COMMAND, providerLabel, redact, type Provider } from "./credentials.js";
 import { stopOpencode } from "./opencode.js";
 import { select } from "./prompt.js";
@@ -31,6 +31,7 @@ export async function model(args: string[]): Promise<number> {
     const models = await catalog(provider, dir);
     const current = currentRoute(provider);
     if (flags.main !== undefined) return save(provider, models, flags as Required<Pick2>, out);
+    for (const warning of modelWarnings(provider.provider)) out(`! ${warning}`);
     if (!flags.list && process.stdin.isTTY) return await pick(provider, models, current, out);
     out(describe(provider, models, current));
     if (!flags.list) out(USAGE);

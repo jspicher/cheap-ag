@@ -131,9 +131,13 @@ node dist/index.js allow --codex --repo /absolute/path/to/project
 
 ## Models, task kinds, and plans
 
-Project settings live in `cheapag.json`; user settings live in `~/.config/cheapag/config.json`. For example:
+Project settings live in `cheapag.json`; user settings live in `~/.config/cheapag/config.json`.
+
+Model roles naming another provider are ignored by the active OpenCode provider. `ping`, `status`, `model`, `delegate`, and `research` warn about those settings and show each role's configured replacement route. Consent filtering and per-call model overrides still apply; unused aliases are not warnings, and explicit Codex calls use their separate engine.
 
 `limits.repro_by_turns` defaults to `30`: a bug-fix step with checks that has made no edits stops at that turn (×2 for medium tasks, ×3 for hard tasks). This is past the default `max_turns` of `25`, giving diagnosis time to finish within the normal turn budget. Set it lower to stop unproductive workers sooner.
+
+For example:
 
 ```json
 {

@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import assert from "node:assert/strict";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 const temp = mkdtempSync(join(tmpdir(), "cheapag-packed-"));
 assert.ok(resolve(temp).startsWith(resolve(tmpdir()) + sep));
@@ -24,6 +26,26 @@ try {
   const generate = `import { writePlugin } from ${JSON.stringify(pathToFileURL(join(pkg, "dist/install.js")).href)}; writePlugin(${JSON.stringify(entry)}, process.execPath);`;
   run(process.execPath, ["--input-type=module", "-e", generate]);
   const launcher = join(temp, "config/cheapag/bin/cheapag.cjs");
+  // Exercise the shipped warning through both entry points without starting a worker or contacting a provider.
+  mkdirSync(join(env.XDG_DATA_HOME, "opencode"), { recursive: true });
+  writeFileSync(join(env.XDG_DATA_HOME, "opencode/auth.json"), JSON.stringify({ "opencode-go": { type: "api", key: "packed-smoke-only" } }));
+  const settings = join(repo, "cheapag.json");
+  const configured = JSON.stringify({ models: { research: "openrouter/ignored" }, aliases: { cx: "codex/default" } });
+  writeFileSync(settings, configured);
+  for (const command of [entry, launcher]) {
+    const status = run(process.execPath, [command, "status", "--repo", repo]);
+    assert.match(status, /! models\.research names openrouter\/ignored, which is ignored on OpenCode Go; configured research route: opencode-go\/qwen3\.8-flash/);
+    assert.doesNotMatch(status, /! aliases\./);
+  }
+  assert.equal(readFileSync(settings, "utf8"), configured);
+  const client = new Client({ name: "packed-smoke", version: "1" });
+  try {
+    await client.connect(new StdioClientTransport({ command: process.execPath, args: [launcher, "codex"], cwd: repo, env, stderr: "inherit" }));
+    const result = await client.callTool({ name: "delegate", arguments: { task: "write hello", files: "hello.txt", done_when: "hello exists" } });
+    const text = result.content.filter(c => c.type === "text").map(c => c.text).join("\n");
+    assert.match(text, /^CONSENT /); // no approval: no engine, model request, or worker
+    assert.match(text, /\n\n! models\.research names openrouter\/ignored/);
+  } finally { await client.close(); }
   const state = JSON.stringify({ session_id: "s", prompt_id: "p", cwd: repo, tool_name: "Write", tool_input: { file_path: "a.ts", content: "x\n".repeat(100) } });
   assert.equal(run(process.execPath, [launcher, "hook", "guard"], { input: state }), "");
   assert.equal(run(process.execPath, [launcher, "hook", "context", "codex"], { input: "" }), "");
@@ -32,5 +54,5 @@ try {
   const before = readFileSync(config);
   assert.match(run(process.execPath, [launcher, "doctor", "--repo", repo]), /disabled by choice/);
   assert.deepEqual(readFileSync(config), before);
-  console.log("Packed CLI and generated launcher smoke passed in a temporary home.");
+  console.log("Packed CLI, MCP and generated launcher smoke passed in a temporary home.");
 } finally { rmSync(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); }

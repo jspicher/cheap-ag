@@ -6,7 +6,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import type { ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { cleanProject, gitignoreHint, startPeriodicCleanup } from "./cleanup.js";
 import { loadConfig, type HardTasks, type TakeOver } from "./config.js";
-import { consentGate, presetHere, readEngines } from "./consent.js";
+import { codexModel, consentGate, modelWarnings, presetHere, readEngines } from "./consent.js";
 import { detectProvider, LOGIN_COMMAND, NO_PROVIDER, redact, type Provider } from "./credentials.js";
 import { delegate, jobs, landJobs, recoverJobs, reply } from "./jobs.js";
 import { debugLogPath, ensureOpencode, stopOpencode } from "./opencode.js";
@@ -106,6 +106,12 @@ export async function serve(host: "claude" | "codex" = "claude") {
     const hint = gitignoreHint(root);
     return hint ? `${text}\n\n${hint}` : text;
   };
+  // Diagnostics stay outside result blocks and receipts. Codex calls do not use the OpenCode role configuration.
+  const withWarnings = (text: string, provider: Provider | undefined, root?: string, requested?: string) => {
+    if (!provider || (requested !== undefined && codexModel(root ?? process.cwd(), requested))) return text;
+    const warnings = modelWarnings(provider.provider, root);
+    return warnings.length ? `${text}\n\n${warnings.map((warning) => `! ${warning}`).join("\n")}` : text;
+  };
   /** Repositories this process has recovered and cleaned: the cwd's at start, each `root` on its first call. */
   const prepared = new Set<string>();
   const prepare = (dir: string) => {
@@ -176,7 +182,7 @@ export async function serve(host: "claude" | "codex" = "claude") {
         const opencode = await ensureOpencode(provider, dir);
         // read after the boot: the debug log is opened when OpenCode starts
         const debug = debugLogPath ? ` debug_log=${debugLogPath}` : "";
-        return safeText(`OK cheapag ${version} opencode=${opencode.version} provider=${provider.provider} via=${provider.via} preset=${presetHere(provider.provider, dir)}${codex}${consent}${at}${debug}${reason}`);
+        return safeText(withWarnings(`OK cheapag ${version} opencode=${opencode.version} provider=${provider.provider} via=${provider.via} preset=${presetHere(provider.provider, dir)}${codex}${consent}${at}${debug}${reason}`, provider, dir));
       } catch (err) {
         return safeText(`FAIL reason: ${(err as Error).message}`);
       }
@@ -210,7 +216,7 @@ export async function serve(host: "claude" | "codex" = "claude") {
       try {
         const root = repoFor(input.root);
         const req = { ...input, root, ...(host === "codex" && { wait: false }) };
-        return safeText(withHint(await delegate(req, { provider, opencode: opencodeFor(provider, root), progress: progressTo(extra) }), root));
+        return safeText(withWarnings(withHint(await delegate(req, { provider, opencode: opencodeFor(provider, root), progress: progressTo(extra) }), root), provider, root, input.model));
       } catch (err) {
         return safeText(failBlock((err as Error).message));
       }
@@ -235,7 +241,7 @@ export async function serve(host: "claude" | "codex" = "claude") {
       if (!provider) return safeText(NO_PROVIDER);
       try {
         const root = repoFor(input.root);
-        return safeText(withHint(await research({ ...input, root }, { provider, opencode: opencodeFor(provider, root), progress: progressTo(extra) }), root));
+        return safeText(withWarnings(withHint(await research({ ...input, root }, { provider, opencode: opencodeFor(provider, root), progress: progressTo(extra) }), root), provider, root, input.model));
       } catch (err) {
         return safeText(failBlock((err as Error).message));
       }

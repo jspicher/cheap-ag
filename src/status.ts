@@ -3,7 +3,7 @@ import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from "node
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { endpointMoved, describe, presetHere, readConsent, readEngines, routeMoved } from "./consent.js";
+import { endpointMoved, describe, modelWarnings, presetHere, readConsent, readEngines, routeMoved } from "./consent.js";
 import { detectProvider, LOGIN_COMMAND, providerLabel, redact } from "./credentials.js";
 import { blockedFor, records } from "./jobs.js";
 import { isAlive } from "./platform.js";
@@ -26,6 +26,7 @@ export function status(args: string[]): number {
   }
   const provider = detectProvider()?.provider;
   out(`cheapag ${version} provider=${provider ? `${provider} preset=${presetHere(provider)}` : `none (run ${LOGIN_COMMAND})`}`);
+  if (provider) for (const warning of modelWarnings(provider)) out(`! ${warning}`);
 
   let root: string | undefined;
   try {

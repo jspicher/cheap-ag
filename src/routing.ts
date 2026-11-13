@@ -129,6 +129,21 @@ export function effectiveModels(provider: ProviderId, config: Pick<Config, "pres
   return { ...preset, ...config.models };
 }
 
+/** Configured roles ignored by fullRoute because they name a different provider; per-call aliases are separate. */
+export type ForeignModel = { role: "implement" | "medium" | "hard" | "research" | "escalation" | "fallback"; name: string };
+
+export function foreignModels(provider: ProviderId, models: ModelsConfig = {}): ForeignModel[] {
+  const foreign = (name: string) => !name.startsWith(`${provider}/`);
+  const roles = ["implement", "medium", "hard", "research", "escalation"] as const;
+  return [
+    ...roles.flatMap((role) => {
+      const name = models[role];
+      return name && foreign(name) ? [{ role, name }] : [];
+    }),
+    ...(models.fallback ?? []).filter(foreign).map((name) => ({ role: "fallback" as const, name })),
+  ];
+}
+
 /** Every model a provider's worker may run, defaults overridden by the config, before the repo's allowlist filters them. */
 export function fullRoute(provider: ProviderId, models: ModelsConfig = {}): Route {
   const roles = rolesOf(provider);
